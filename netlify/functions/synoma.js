@@ -60,6 +60,14 @@ export default async (req) => {
   const messages = payload?.messages;
 
   if (!code || !validCodes.includes(code)) {
+    // Diagnóstico sin volcar códigos completos al log. Comparar los largos
+    // distingue "lo escribió mal" de "llegó cortado" o "la variable no tiene
+    // lo que creemos que tiene".
+    console.warn('[synoma] código rechazado:', JSON.stringify({
+      recibido: code ? `${code.slice(0, 4)}…(${code.length} car.)` : '(vacío)',
+      codigos_cargados: validCodes.length,
+      largos_cargados: validCodes.map((c) => c.length),
+    }));
     return fail(403, 'invalid_code',
       'Código inválido o vencido. Consultá a tu coach.', cors);
   }
