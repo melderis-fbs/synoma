@@ -1,3 +1,28 @@
 [build]
-  publish = "."
+  # Antes era publish = "." — publicaba TODA la raíz del repo, incluido
+  # README-DEPLOY.md (que nombra quién compró la API key, el formato de los
+  # códigos de acceso y el costo por cliente). Con "public" solo se publica
+  # lo que va al navegador.
+  publish = "public"
   functions = "netlify/functions"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[functions]
+  # Functions 2.0 con módulos ESM: hace falta para el streaming.
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    # El HTML no se cachea: así un deploy con cambios llega al cliente en el
+    # próximo refresh y no queda pegado a una versión vieja.
+    Cache-Control = "no-cache"

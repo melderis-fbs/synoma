@@ -103,6 +103,9 @@
   .typing{color:var(--muted);font-size:13px;padding:0 36px 10px;display:none;background:var(--paper)}
   .demo-pill{position:fixed;bottom:14px;right:16px;background:#FFF7E8;border:1px solid #EAD9B0;
     color:#A8946F;font-size:11px;font-weight:700;padding:6px 12px;border-radius:99px;display:none;letter-spacing:.06em}
+  .err-note{background:#FFF3F2;border:1px solid #F3D2CF;color:#B3413A;font-size:13.5px;
+    padding:11px 14px;border-radius:10px;line-height:1.55}
+  .btn:disabled{opacity:.45;cursor:default}
   @media(max-width:760px){.cmds{display:none}.nav .menu{gap:14px}}
 </style>
 </head>
@@ -210,7 +213,7 @@
       <div class="typing" id="typing">Synoma está escribiendo…</div>
       <div class="composer">
         <textarea id="input" placeholder="Escribile a Synoma… (Enter para enviar)"></textarea>
-        <button class="btn" onclick="send()">Enviar</button>
+        <button class="btn" id="send-btn" onclick="send()">Enviar</button>
       </div>
     </div>
   </div>
@@ -222,6 +225,7 @@
 const $ = id => document.getElementById(id);
 let CODE = localStorage.getItem('synoma_code') || '';
 let HISTORY = [];
+let SENDING = false;
 
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -230,18 +234,65 @@ function show(view){
 function profileKey(){ return 'synoma_profile_' + CODE; }
 function getProfile(){ try{ return JSON.parse(localStorage.getItem(profileKey())||'null'); }catch(e){ return null; } }
 
-function login(){
+/* ---------- login / identidad ---------- */
+
+async function login(){
   const c = $('code-input').value.trim().toUpperCase();
-  if(c.length < 4){ $('login-err').textContent = 'Ingresá el código que te dio tu coach.'; return; }
+  if(c.length < 4){ setLoginMsg('Ingresá el código que te dio tu coach.', 'err'); return; }
   CODE = c; localStorage.setItem('synoma_code', c);
-  if(getProfile()){ enterDash(); } else { show('view-setup'); }
+  setLoginMsg('');
+
+  if(getProfile()){ enterDash(); return; }
+
+  // Sin perfil local. Antes de pedirle que vuelva a pegar tres documentos,
+  // buscamos el respaldo del servidor (Safari borra el localStorage a los
+  // 7 días sin visitas, así que esto pasa seguido en iPhone).
+  setLoginMsg('Buscando tu identidad guardada…', 'info');
+  const restored = await fetchBackup(c);
+  setLoginMsg('');
+  if(restored){
+    localStorage.setItem(profileKey(), JSON.stringify(restored));
+    enterDash();
+  } else {
+    show('view-setup');
+  }
 }
-function saveSetup(){
+
+function setLoginMsg(text, kind){
+  const el = $('login-err');
+  el.textContent = text || '';
+  el.style.color = kind === 'info' ? 'var(--muted)' : '';
+}
+
+async function saveSetup(){
   const p = { manual:$('f-manual').value.trim(), oferta:$('f-oferta').value.trim(), encuesta:$('f-encuesta').value.trim() };
   if(!p.oferta){ alert('Como mínimo pegá tu Oferta en Una Página — sin eso Synoma escribe genérico.'); return; }
   localStorage.setItem(profileKey(), JSON.stringify(p));
   enterDash();
+  saveBackup(p); // en segundo plano: no hace esperar al cliente
 }
+
+async function fetchBackup(code){
+  try{
+    const res = await fetch('/api/perfil?code=' + encodeURIComponent(code));
+    if(!res.ok) return null;
+    const data = await res.json();
+    const p = data && data.profile;
+    if(!p || !p.oferta) return null;
+    return { manual: p.manual||'', oferta: p.oferta||'', encuesta: p.encuesta||'' };
+  }catch(e){ return null; }
+}
+
+async function saveBackup(p){
+  try{
+    const res = await fetch('/api/perfil', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code: CODE, profile: p })
+    });
+    if(!res.ok) console.warn('[synoma] respaldo del perfil no guardado:', res.status);
+  }catch(e){ console.warn('[synoma] respaldo del perfil no guardado:', e); }
+}
+
 function showSetup(){
   const p = getProfile()||{};
   $('f-manual').value = p.manual||''; $('f-oferta').value = p.oferta||''; $('f-encuesta').value = p.encuesta||'';
@@ -250,17 +301,41 @@ function showSetup(){
 function enterDash(){ $('who').textContent = CODE; show('view-dash'); }
 function logout(){ localStorage.removeItem('synoma_code'); CODE=''; HISTORY=[]; location.reload(); }
 
-function addMsg(role, text, tag){
+/* ---------- mensajes ---------- */
+
+function renderLite(text){
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+}
+
+// Crea la burbuja vacía y devuelve el nodo del cuerpo, para poder ir
+// escribiéndole texto encima mientras llega el stream.
+function startMsg(role, tag){
   const w = $('welcome'); if(w) w.remove();
   const d = document.createElement('div');
   d.className = 'msg ' + (role==='user'?'user':'bot');
   if(tag){ const t=document.createElement('div'); t.className='tag'; t.textContent=tag; d.appendChild(t); }
   const body=document.createElement('div');
-  body.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
   d.appendChild(body);
   $('msgs').appendChild(d);
-  $('msgs').scrollTop = $('msgs').scrollHeight;
+  scrollDown();
+  return body;
+}
+
+function addMsg(role, text, tag){
+  const body = startMsg(role, tag);
+  body.innerHTML = renderLite(text);
+  scrollDown();
+  return body;
+}
+
+function scrollDown(){ $('msgs').scrollTop = $('msgs').scrollHeight; }
+
+function errorNote(message){
+  const n = document.createElement('div');
+  n.className = 'err-note';
+  n.textContent = '⚠️ ' + message;
+  return n;
 }
 
 function askCmd(cmd, hint){
@@ -270,40 +345,119 @@ function askCmd(cmd, hint){
 }
 function runCmd(cmd){ $('input').value = cmd; send(); }
 
+/* ---------- envío con streaming ---------- */
+
 async function send(){
+  if(SENDING) return;                    // evita doble envío con Enter repetido
   const text = $('input').value.trim();
   if(!text) return;
+
+  SENDING = true;
+  $('send-btn').disabled = true;
   $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
   addMsg('user', text);
   HISTORY.push({role:'user', content:text});
   $('typing').style.display='block';
+
+  let body = null;   // burbuja de la respuesta; se crea al primer fragmento
+  let acc = '';      // texto acumulado
+
   try{
-    const res = await fetch('/.netlify/functions/synoma', {
+    const res = await fetch('/api/synoma', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ code: CODE, profile: getProfile(), messages: HISTORY.slice(-12) })
     });
-    if(!res.ok) throw new Error('backend');
-    const data = await res.json();
-    HISTORY.push({role:'assistant', content:data.text});
-    addMsg('bot', data.text, 'Synoma');
-  }catch(e){
-    $('demo-pill').style.display='block';
-    const demo = demoReply(text);
-    HISTORY.push({role:'assistant', content:demo});
-    addMsg('bot', demo, 'Synoma · demo');
+
+    if(!res.ok){
+      const info = await res.json().catch(()=>({}));
+      throw { code: info.error || ('http_' + res.status),
+              message: info.message || 'No se pudo contactar al motor.' };
+    }
+
+    // El servidor manda NDJSON: una línea de JSON por evento.
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+
+    while(true){
+      const { value, done } = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, { stream:true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for(const line of lines){
+        if(!line.trim()) continue;
+        let ev; try{ ev = JSON.parse(line); }catch(e){ continue; }
+
+        if(ev.type === 'text'){
+          if(!body){ $('typing').style.display='none'; body = startMsg('bot','Synoma'); }
+          acc += ev.text;
+          body.innerHTML = renderLite(acc);
+          scrollDown();
+        } else if(ev.type === 'error'){
+          throw { code: ev.error, message: ev.message };
+        }
+      }
+    }
+
+    if(acc) HISTORY.push({role:'assistant', content:acc});
+  }catch(err){
+    handleSendError(err, body, acc);
+  }finally{
+    $('typing').style.display='none';
+    $('send-btn').disabled = false;
+    SENDING = false;
   }
-  $('typing').style.display='none';
 }
 
-function demoReply(text){
-  if(text.startsWith('/semana')) return "**Tu semana de contenido** (ejemplo de demo — con el motor conectado, esto sale de TU oferta y TU encuesta):\n\n**Lunes · Reel yapping · Dolor 1** — Gancho: \"Si estás cansada todo el día y ya probaste mil dietas, esto es para vos.\" Punteo: por qué las dietas genéricas fallan → qué mirar primero → mini acción de hoy. Sin venta.\n\n**Martes · Historias** — 3 historias: detrás de escena + encuesta \"¿te pasa X?\" + respuesta.\n\n**Miércoles · Reel yapping · Pilar 1** — educativo.\n\n**Jueves · Post carrusel · contracorriente** — \"Lo que tu nutricionista no te dice\".\n\n**Viernes · Reel con intención de venta** — dolor → promesa → llamado a la acción.\n\n🎬 Grabá todo el martes en UNA tanda. Repetición, no perfección.";
-  return "⚡ **Modo demo:** el motor todavía no está conectado (falta el deploy con la API). Cuando esté activo, acá te respondo con TU voz, TU oferta y las palabras de TUS clientes.\n\nProbá el botón **📅 Mi semana** para ver un ejemplo del formato.";
+function handleSendError(err, body, acc){
+  const code = (err && err.code) || 'unknown';
+  const message = (err && err.message) || 'Ocurrió un error inesperado. Probá de nuevo.';
+
+  // El modo demo se activa SOLO si el servidor dice explícitamente que el motor
+  // no está configurado. Antes CUALQUIER error caía acá — incluido el timeout —
+  // y el cliente recibía contenido de ejemplo inventado creyendo que era suyo.
+  if(code === 'not_configured'){
+    $('demo-pill').style.display='block';
+    const demo = demoReply();
+    addMsg('bot', demo, 'Ejemplo — motor sin conectar');
+    return;                              // no se guarda en HISTORY: no es contenido real
+  }
+
+  if(acc && body){
+    // Respuesta cortada a mitad: se conserva lo que llegó y se marca el corte.
+    HISTORY.push({role:'assistant', content:acc});
+    body.appendChild(document.createElement('br'));
+    body.appendChild(errorNote(message));
+  } else {
+    startMsg('bot', 'No se pudo responder').appendChild(errorNote(message));
+  }
+  scrollDown();
 }
+
+// Texto de emergencia. No imita contenido del cliente a propósito: la versión
+// anterior devolvía un plan semanal inventado sobre dietas, que un cliente de
+// otro rubro podía tomar por real.
+function demoReply(){
+  return "⚠️ **Esto no es tu contenido.**\n\nEl motor no está conectado en este momento — falta configurar la API en el servidor. No puedo generar nada con tu voz ni con tu oferta.\n\nAvisale a tu coach. Cuando esté activo, acá te aparece tu plan real, escrito con tus palabras y las de tus clientes.";
+}
+
+/* ---------- arranque ---------- */
 
 $('input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
 $('code-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ login(); }});
 
-if(CODE && getProfile()){ enterDash(); } else if(CODE){ show('view-setup'); }
+(async function boot(){
+  if(!CODE) return;
+  if(getProfile()){ enterDash(); return; }
+  const restored = await fetchBackup(CODE);
+  if(restored){
+    localStorage.setItem(profileKey(), JSON.stringify(restored));
+    enterDash();
+  } else {
+    show('view-setup');
+  }
+})();
 </script>
 </body>
 </html>

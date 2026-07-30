@@ -1,96 +1,331 @@
 // Synoma Founders — motor de contenido
-// Función serverless: valida el código del cliente y llama a la API de Claude
-// Env vars requeridas en Netlify:
-//   ANTHROPIC_API_KEY = sk-ant-...
-//   SYNOMA_CODES      = FND-ANA1,FND-LUZ2,FND-PAB3   (códigos separados por coma)
+//
+// Función serverless (Netlify Functions 2.0): valida el código del cliente,
+// arma el prompt con su perfil y hace streaming de la respuesta de Claude.
+//
+// El prompt del sistema vive en ./_prompt.js — editalo ahí, no acá.
+//
+// Variables de entorno:
+//   ANTHROPIC_API_KEY       (requerida)  sk-ant-...
+//   SYNOMA_CODES            (requerida)  FND-ANA1,FND-LUZ2,FND-PAB3
+//   SYNOMA_DAILY_LIMIT      (opcional)   mensajes por código por día. Default 60.
+//   SYNOMA_ALLOWED_ORIGINS  (opcional)   solo si la app se sirve desde OTRO dominio.
+//                                        Vacío = únicamente mismo origen (lo normal).
 
-const SYSTEM_BASE = `Sos Synoma, el Motor de Contenido personal de un cliente del programa Founders (mentoría de negocios de Vicky Becci). Tu trabajo es ayudarle a crear contenido que suene 100% a él/ella y que venda su oferta — nunca contenido genérico.
+import { getStore } from '@netlify/blobs';
+import { SYSTEM_BASE } from './_prompt.js';
 
-REGLAS INNEGOCIABLES:
-1. SU VOZ O NADA. Escribí como habla el cliente (tono, vocabulario, muletillas buenas, voseo si lo usa). Su identidad está en su PERFIL (abajo). Si falta contexto para algo, preguntá — no inventes una voz neutra.
-2. ANTI-GENÉRICO: si una pieza la podría publicar cualquier otro profesional de su rubro, está mal. Rehacela anclada en SU método, SUS historias o SUS clientes.
-3. ESTILO YAPPING PRIMERO: el formato principal es hablarle a cámara de forma natural, como le explica a un cliente en consulta. Los guiones son PUNTEOS para hablar (gancho + 3 ideas + cierre), nunca texto para memorizar. Ganchos sin "hola, ¿cómo están?".
-4. NUNCA inventes casos, testimonios, cifras ni resultados. Si hace falta prueba social, pedile casos reales.
-5. Cada pieza termina con instrucción de grabación/publicación ("grabalo en una toma, 60-90 segundos, repetición no perfección").
-6. MEZCLA DE INTENCIÓN: de cada 5 piezas semanales, 3 sin intención de venta y 2 con intención de venta explícita (su oferta, sin vergüenza).
-7. Usá SIEMPRE las frases textuales de la encuesta del cliente antes que sinónimos elegantes.
+const MODEL = 'claude-sonnet-5';
+const MAX_TOKENS = 2500;
+const HISTORY_TURNS = 12;
+const DEFAULT_DAILY_LIMIT = 60;
 
-COMANDOS (si el mensaje empieza con esto, respondé ese formato):
-/semana → plan semanal: tabla con 5 piezas (día · formato · pilar o dolor que ataca · gancho listo · punteo de 3 ideas · intención · tiempo estimado de producción). 3 educativas + 2 de venta. Variá pilares y dolores respecto a la semana anterior si hay historial. Rotá también los TIPOS de pieza a lo largo de las semanas: opinión contracorriente, post de identidad (quién sos y qué defendés), el humano detrás de la cuenta, predicción del rubro ("lo digo ahora:"), pieza para la audiencia de tu audiencia (alcance), pieza que invita a guardar (checklist/recurso), pieza que invita a seguir (promesa de serie), y capítulos de una serie con nombre propio del cliente. Sugerí grabar todo en UNA tanda semanal.
-/idea [tema] → 5 ángulos: educativo, contracorriente, historia personal, respuesta a objeción, venta.
-/guion [idea] → guion yapping: GANCHO en 3 capas (VERBAL: la primera frase hablada · VISUAL: qué se ve en el primer segundo, texto en pantalla o situación · nota de ENERGÍA: cómo arrancar con vida), punteo de desarrollo (3 ideas máx., con la frase textual de encuesta que corresponda), CIERRE con llamado a la acción, instrucción de grabación con presupuesto de tiempo ("este post te lleva 10 minutos, no más").
-/gancho [tema] → 10 primeras líneas: 3 de dolor (palabras de su encuesta), 3 contracorriente, 2 de curiosidad, 2 de resultado. Para cada una sugerí también el gancho VISUAL (texto en pantalla o primera imagen).
-/historias → secuencia de 3-5 historias de Instagram para hoy: cotidiano + valor + interacción (encuesta/pregunta) + puente a oferta cuando toque.
-/venta → 1 pieza con intención de venta explícita: dolor textual → desarma la objeción principal → promesa → llamado directo. Sin pedir perdón por vender.
-/post [idea] → versión carrusel o texto: título, 5-7 puntos, cierre.
-/repurpose [contenido] → convertí esa pieza en: 1 reel yapping + 3 historias + 1 post de texto.
-/revisar [borrador] → auditalo contra las reglas: ¿suena al cliente? ¿es genérico? ¿usa las palabras de su cliente? ¿tiene gancho? Devolvé versión corregida + qué cambiaste y por qué.
-/objecion [comentario/DM] → respuesta con su voz + si aplica, una idea de contenido que nazca de esa objeción.
-/racha → repaso semanal: preguntá qué publicó de lo planificado, qué señales aparecieron (comentarios, DMs, consultas), ajustá la próxima semana con esos datos y recordale anotar en su Bitácora de siembra.
+// Topes de tamaño del perfil, iguales a la v1.
+const LIMITS = { manual: 30000, oferta: 15000, encuesta: 10000, message: 20000 };
 
-ACTITUD: sos exigente. Si pide "un post sobre motivación", desafialo: ¿a qué dolor de su cliente apunta y qué quiere que pase después? Sos parte de su equipo, no un complaciente. Respondé siempre en español.`;
+export default async (req) => {
+  const cors = corsFor(req);
 
-exports.handler = async (event) => {
-  const headers = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
-  if (event.httpMethod === 'OPTIONS') return { statusCode: 200, headers, body: '' };
-  if (event.httpMethod !== 'POST') return { statusCode: 405, headers, body: JSON.stringify({ error: 'POST only' }) };
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+  if (req.method !== 'POST') return fail(405, 'method_not_allowed', 'Usá POST.', cors);
 
+  // --- Chequeo de origen (del lado del servidor) ---------------------------
+  // CORS solo evita que un sitio ajeno LEA la respuesta; la llamada igual se
+  // ejecuta y consume tokens. Este chequeo la rechaza antes de gastar plata.
+  if (!originAllowed(req)) {
+    return fail(403, 'forbidden_origin', 'Origen no permitido.', cors);
+  }
+
+  // --- Config del servidor -------------------------------------------------
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const validCodes = parseCodes(process.env.SYNOMA_CODES);
+
+  // 503 = "el motor no está configurado". Es la ÚNICA condición que habilita
+  // el modo demo en el front. Cualquier otro error se muestra como error.
+  if (!apiKey || validCodes.length === 0) {
+    return fail(503, 'not_configured',
+      'El motor todavía no está configurado en el servidor.', cors);
+  }
+
+  // --- Payload -------------------------------------------------------------
   let payload;
-  try { payload = JSON.parse(event.body || '{}'); }
-  catch { return { statusCode: 400, headers, body: JSON.stringify({ error: 'JSON inválido' }) }; }
+  try {
+    payload = await req.json();
+  } catch {
+    return fail(400, 'bad_json', 'El cuerpo de la petición no es JSON válido.', cors);
+  }
 
-  const { code, profile, messages } = payload;
+  const code = String(payload?.code ?? '').trim().toUpperCase();
+  const profile = payload?.profile ?? {};
+  const messages = payload?.messages;
 
-  // --- validación de código ---
-  const validCodes = (process.env.SYNOMA_CODES || '').split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
-  if (!code || !validCodes.includes(String(code).toUpperCase())) {
-    return { statusCode: 403, headers, body: JSON.stringify({ error: 'Código inválido o vencido. Consultá a tu coach.' }) };
+  if (!code || !validCodes.includes(code)) {
+    return fail(403, 'invalid_code',
+      'Código inválido o vencido. Consultá a tu coach.', cors);
   }
   if (!Array.isArray(messages) || messages.length === 0) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Sin mensajes' }) };
+    return fail(400, 'no_messages', 'No llegó ningún mensaje.', cors);
   }
 
-  // --- system prompt con el perfil del cliente ---
-  const p = profile || {};
-  const system = SYSTEM_BASE + `
+  // --- Tope de uso por código y por día ------------------------------------
+  const limit = Number(process.env.SYNOMA_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
+  const usage = await bumpUsage(code, limit);
+  if (usage.exceeded) {
+    return fail(429, 'daily_limit',
+      `Llegaste al tope de ${limit} mensajes por hoy. Mañana se renueva.`, cors);
+  }
 
-=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===
---- SU MANUAL DE TRANSFORMACIÓN ---
-${(p.manual || '(no cargado — pedile que lo cargue en "Mi identidad")').slice(0, 30000)}
---- SU OFERTA EN UNA PÁGINA ---
-${(p.oferta || '(no cargada)').slice(0, 15000)}
---- FRASES TEXTUALES DE SU ENCUESTA ---
-${(p.encuesta || '(no cargadas)').slice(0, 10000)}
-=== FIN DEL PERFIL ===`;
+  // --- System prompt en dos bloques cacheables -----------------------------
+  // Bloque 1: SYSTEM_BASE — idéntico para todos los clientes, se cachea global.
+  // Bloque 2: el perfil    — estable por cliente, se cachea por cliente.
+  // Las lecturas de caché cuestan el 10% del precio normal de entrada.
+  const system = [
+    { type: 'text', text: SYSTEM_BASE, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: profileBlock(profile), cache_control: { type: 'ephemeral' } },
+  ];
 
+  const trimmed = messages.slice(-HISTORY_TURNS).map((m) => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: String(m.content ?? '').slice(0, LIMITS.message),
+  }));
+
+  // --- Llamada a Claude, con streaming y reintentos ------------------------
+  let upstream;
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 2500,
-        system,
-        messages: messages.slice(-12).map(m => ({ role: m.role, content: String(m.content).slice(0, 20000) })),
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      console.error('Anthropic error', res.status, JSON.stringify(data).slice(0, 300));
-      return { statusCode: 502, headers, body: JSON.stringify({ error: 'El motor está ocupado, probá de nuevo en un minuto.' }) };
-    }
-    const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n');
-    return { statusCode: 200, headers, body: JSON.stringify({ text }) };
+    upstream = await callClaude({ apiKey, system, messages: trimmed });
   } catch (e) {
-    console.error(e);
-    return { statusCode: 500, headers, body: JSON.stringify({ error: 'Error interno del motor.' }) };
+    console.error('[synoma] fallo llamando a Anthropic:', e?.message ?? e);
+    return fail(502, 'upstream_error',
+      'El motor no responde en este momento. Probá de nuevo en un minuto.', cors);
   }
+
+  // A partir de acá el stream ya arrancó: los errores se emiten DENTRO del
+  // stream, porque los headers HTTP ya salieron.
+  return new Response(toNdjson(upstream.body, code), {
+    status: 200,
+    headers: {
+      ...cors,
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'X-Accel-Buffering': 'no', // que ningún proxy intermedio bufferee
+    },
+  });
 };
+
+export const config = { path: '/api/synoma' };
+
+// ---------------------------------------------------------------------------
+// Llamada a la API con reintentos
+// ---------------------------------------------------------------------------
+
+// Reintenta 429 / 529 / 5xx, que son transitorios. El SDK oficial de Anthropic
+// hace esto solo; con fetch crudo hay que escribirlo (y sin él, un pico de
+// carga en la API se le muestra al cliente como "el motor está ocupado").
+async function callClaude({ apiKey, system, messages, attempt = 0 }) {
+  const MAX_ATTEMPTS = 3;
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      stream: true, // ← el arreglo del timeout: los bytes salen de inmediato
+      system,
+      messages,
+    }),
+  });
+
+  if (res.ok) return res;
+
+  const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
+  if (retryable && attempt < MAX_ATTEMPTS - 1) {
+    const retryAfter = Number(res.headers.get('retry-after'));
+    const waitMs = Number.isFinite(retryAfter) && retryAfter > 0
+      ? Math.min(retryAfter * 1000, 8000)
+      : 2 ** attempt * 1000 + Math.random() * 500;
+    await new Promise((r) => setTimeout(r, waitMs));
+    return callClaude({ apiKey, system, messages, attempt: attempt + 1 });
+  }
+
+  const detail = await res.text().catch(() => '');
+  throw new Error(`Anthropic ${res.status}: ${detail.slice(0, 300)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Traducción del SSE de Anthropic a NDJSON simple para el navegador
+// ---------------------------------------------------------------------------
+
+// Se emite una línea de JSON por evento. El navegador lo lee incremental sin
+// necesitar un parser de SSE:
+//   {"type":"text","text":"..."}                    fragmento de texto
+//   {"type":"done","usage":{...}}                   terminó bien
+//   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
+function toNdjson(body, code) {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream({
+    async start(controller) {
+      const emit = (obj) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+      const reader = body.getReader();
+      let buffer = '';
+      let usage = null;
+      let emittedText = false;
+
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          for (const line of lines) {
+            if (!line.startsWith('data:')) continue;
+            const raw = line.slice(5).trim();
+            if (!raw || raw === '[DONE]') continue;
+
+            let ev;
+            try { ev = JSON.parse(raw); } catch { continue; }
+
+            if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+              emittedText = true;
+              emit({ type: 'text', text: ev.delta.text });
+            } else if (ev.type === 'message_start' && ev.message?.usage) {
+              usage = { ...(usage ?? {}), ...ev.message.usage };
+            } else if (ev.type === 'message_delta' && ev.usage) {
+              usage = { ...(usage ?? {}), ...ev.usage };
+            } else if (ev.type === 'error') {
+              // Error a mitad del stream. Se avisa; no se finge éxito.
+              console.error('[synoma] error en stream:', ev.error);
+              emit({
+                type: 'error',
+                error: 'stream_error',
+                message: 'El motor se cortó a mitad de la respuesta. Probá de nuevo.',
+              });
+              controller.close();
+              return;
+            }
+          }
+        }
+
+        if (!emittedText) {
+          emit({
+            type: 'error',
+            error: 'empty_response',
+            message: 'El motor devolvió una respuesta vacía. Probá de nuevo.',
+          });
+        } else {
+          // usage queda en los logs de Netlify: sirve para ver el costo real
+          // por cliente, incluido cuánto ahorró el caché.
+          if (usage) console.log('[synoma] uso', JSON.stringify({ code, ...usage }));
+          emit({ type: 'done', usage });
+        }
+      } catch (e) {
+        console.error('[synoma] stream interrumpido:', e?.message ?? e);
+        emit({
+          type: 'error',
+          error: 'stream_aborted',
+          message: 'Se cortó la conexión con el motor. Probá de nuevo.',
+        });
+      } finally {
+        controller.close();
+      }
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Auxiliares
+// ---------------------------------------------------------------------------
+
+function profileBlock(p) {
+  const part = (v, max, vacio) => {
+    const s = String(v ?? '').trim();
+    return s ? s.slice(0, max) : vacio;
+  };
+  return [
+    '=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===',
+    '--- SU MANUAL DE TRANSFORMACIÓN ---',
+    part(p.manual, LIMITS.manual, '(no cargado — pedile que lo cargue en "Mi identidad")'),
+    '--- SU OFERTA EN UNA PÁGINA ---',
+    part(p.oferta, LIMITS.oferta, '(no cargada)'),
+    '--- FRASES TEXTUALES DE SU ENCUESTA ---',
+    part(p.encuesta, LIMITS.encuesta, '(no cargadas)'),
+    '=== FIN DEL PERFIL ===',
+  ].join('\n');
+}
+
+function parseCodes(raw) {
+  return String(raw ?? '')
+    .split(',')
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+}
+
+// Cuenta mensajes por código y por día en Netlify Blobs.
+//
+// Decisión consciente: si Blobs falla, se deja pasar la petición (fail open)
+// en lugar de bloquearla. Un problema del contador no debería tumbar el
+// producto. El costo es que durante una caída de Blobs no hay tope — la
+// protección de fondo sigue siendo el chequeo de origen y el de código.
+async function bumpUsage(code, limit) {
+  try {
+    const store = getStore('synoma-uso');
+    const key = `${code}:${new Date().toISOString().slice(0, 10)}`; // FND-ANA1:2026-07-30
+    const current = Number((await store.get(key)) ?? 0);
+    if (current >= limit) return { exceeded: true, count: current };
+    await store.set(key, String(current + 1));
+    return { exceeded: false, count: current + 1 };
+  } catch (e) {
+    console.warn('[synoma] contador de uso no disponible, se deja pasar:', e?.message ?? e);
+    return { exceeded: false, count: -1 };
+  }
+}
+
+// Sin CORS por defecto: la app se sirve del mismo dominio que la función, así
+// que no lo necesita. Antes estaba en '*', que habilitaba a cualquier sitio del
+// mundo a llamar la función con un código filtrado.
+function corsFor(req) {
+  const allowed = parseOrigins(process.env.SYNOMA_ALLOWED_ORIGINS);
+  const origin = req.headers.get('origin');
+  if (!origin || !allowed.includes(origin)) return {};
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    Vary: 'Origin',
+  };
+}
+
+function originAllowed(req) {
+  const origin = req.headers.get('origin');
+  if (!origin) return true; // mismo origen (o cliente no-navegador: lo frena el código + el tope)
+  const allowed = parseOrigins(process.env.SYNOMA_ALLOWED_ORIGINS);
+  if (allowed.includes(origin)) return true;
+  try {
+    return new URL(origin).host === new URL(req.url).host;
+  } catch {
+    return false;
+  }
+}
+
+function parseOrigins(raw) {
+  return String(raw ?? '')
+    .split(',')
+    .map((o) => o.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+}
+
+function fail(status, error, message, cors) {
+  return new Response(JSON.stringify({ error, message }), {
+    status,
+    headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
+}
