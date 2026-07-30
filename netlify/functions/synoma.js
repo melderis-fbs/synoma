@@ -55,7 +55,7 @@ export default async (req) => {
     return fail(400, 'bad_json', 'El cuerpo de la petición no es JSON válido.', cors);
   }
 
-  const code = String(payload?.code ?? '').trim().toUpperCase();
+  const code = normalizeCode(payload?.code);
   const profile = payload?.profile ?? {};
   const messages = payload?.messages;
 
@@ -270,11 +270,33 @@ function profileBlock(p) {
   ].join('\n');
 }
 
-function parseCodes(raw) {
+// Normaliza un código para comparar. Se aplica a los DOS lados (lo que escribe
+// el cliente y lo que está en SYNOMA_CODES), así que no importa de dónde salió
+// cada uno.
+//
+// Existe porque un código que pasó por Notas, Word, WhatsApp o un mail llega
+// con el guion cambiado por un guion largo (– en lugar de -) o con espacios
+// invisibles pegados. A la vista es idéntico; al comparar textos no lo es, y el
+// cliente recibe "código inválido" sin ninguna explicación posible.
+export function normalizeCode(raw) {
   return String(raw ?? '')
-    .split(',')
-    .map((c) => c.trim().toUpperCase())
-    .filter(Boolean);
+    .normalize('NFKC')                                 // unifica formas Unicode equivalentes
+    .replace(/[\u2010-\u2015\u2212]/g, '-')            // guiones tipográficos (– —) → guion común
+    .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')    // espacios, incluidos los invisibles
+    .replace(/-/g, '')                                 // el guion es decorativo, no identifica
+    .toUpperCase();
+}
+
+function parseCodes(raw) {
+  const codes = String(raw ?? '').split(',').map(normalizeCode).filter(Boolean);
+
+  // Si dos códigos distintos normalizan al mismo texto, uno tapa al otro y el
+  // cliente afectado no puede entrar nunca. Es raro, pero silencioso.
+  const dupes = codes.filter((c, i) => codes.indexOf(c) !== i);
+  if (dupes.length) {
+    console.error('[synoma] hay códigos duplicados en SYNOMA_CODES:', dupes.length);
+  }
+  return codes;
 }
 
 // Cuenta mensajes por código y por día en Netlify Blobs.

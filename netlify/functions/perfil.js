@@ -104,11 +104,18 @@ export const config = { path: '/api/perfil' };
 
 // ---------------------------------------------------------------------------
 
-const normalize = (v) => String(v ?? '').trim().toUpperCase();
+// Misma normalización que synoma.js: si difieren, el respaldo se guarda con una
+// clave y se busca con otra.
+const normalize = (v) => String(v ?? '')
+  .normalize('NFKC')
+  .replace(/[\u2010-\u2015\u2212]/g, '-')
+  .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')
+  .replace(/-/g, '')
+  .toUpperCase();
 const clip = (v, max) => String(v ?? '').trim().slice(0, max);
 
 function parseCodes(raw) {
-  return String(raw ?? '').split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);
+  return String(raw ?? '').split(',').map(normalize).filter(Boolean);
 }
 
 function originAllowed(req) {

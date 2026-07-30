@@ -357,3 +357,47 @@ test('usa claude-sonnet-5', async () => {
   assert.equal(spy.calls[0].payload.model, 'claude-sonnet-5');
   assert.equal(spy.calls[0].payload.max_tokens, 2500);
 });
+
+// --- normalización de códigos -----------------------------------------------
+// Un código que pasó por Notas, Word, WhatsApp o un mail llega con el guion
+// cambiado o con espacios invisibles pegados. A la vista es idéntico; al
+// comparar textos no lo es, y el cliente recibe "código inválido" sin ninguna
+// explicación posible.
+
+test('el código entra aunque venga con guiones tipográficos o espacios invisibles', async () => {
+  const { normalizeCode } = await import('../netlify/functions/synoma.js');
+  const objetivo = normalizeCode('FND-ANA1');
+  const equivalentes = [
+    'FND-ANA1',            // exacto
+    'fnd-ana1',            // minúsculas
+    '  FND-ANA1  ',        // espacios alrededor
+    'FND–ANA1',       // guion largo (–), típico de Word y Notas
+    'FND‑ANA1',       // guion de no separación
+    'FND-ANA1​',      // espacio de ancho cero al final
+    'FND ANA1',       // espacio duro en lugar del guion
+    'FNDANA1',             // sin guion
+    'FND ANA 1',           // con espacios comunes
+  ];
+  for (const entrada of equivalentes) {
+    assert.equal(normalizeCode(entrada), objetivo, `debería entrar: ${JSON.stringify(entrada)}`);
+  }
+});
+
+test('un código realmente distinto sigue siendo rechazado', async () => {
+  const { normalizeCode } = await import('../netlify/functions/synoma.js');
+  assert.notEqual(normalizeCode('FND-ANA1'), normalizeCode('FND-ANA2'));
+  assert.notEqual(normalizeCode('FND-ANA1'), normalizeCode('FND-LUZ2'));
+});
+
+test('un código pegado con guion largo entra por la función completa', async () => {
+  globalThis.fetch = fakeFetch();
+  const handler = await loadHandler({ SYNOMA_CODES: 'FND-ANA1' });
+  const res = await handler(post({ ...VALID, code: 'fnd–ana1​' }));
+  assert.equal(res.status, 200);
+});
+
+test('SYNOMA_CODES tolera espacios y saltos de línea alrededor de cada código', async () => {
+  globalThis.fetch = fakeFetch();
+  const handler = await loadHandler({ SYNOMA_CODES: ' FND-ANA1 ,\n FND-LUZ2 \n' });
+  assert.equal((await handler(post({ ...VALID, code: 'FND-LUZ2' }))).status, 200);
+});
