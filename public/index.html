@@ -103,10 +103,43 @@
   .typing{color:var(--muted);font-size:13px;padding:0 36px 10px;display:none;background:var(--paper)}
   .demo-pill{position:fixed;bottom:14px;right:16px;background:#FFF7E8;border:1px solid #EAD9B0;
     color:#A8946F;font-size:11px;font-weight:700;padding:6px 12px;border-radius:99px;display:none;letter-spacing:.06em}
+  /* ---------- video explicativo ---------- */
+  .vid{margin:14px 0 0;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--black)}
+  .vid-facade{position:relative;width:100%;aspect-ratio:16/9;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:13px;cursor:pointer;border:none;padding:20px;
+    background:linear-gradient(150deg,#242424,#111111 65%);font-family:'Inter',sans-serif}
+  .vid-facade:hover .vid-play{transform:scale(1.08);background:var(--beige)}
+  .vid-play{width:56px;height:56px;border-radius:50%;background:#fff;display:flex;align-items:center;
+    justify-content:center;transition:transform .18s,background .18s}
+  .vid-play::after{content:'';border-left:17px solid var(--black);border-top:11px solid transparent;
+    border-bottom:11px solid transparent;margin-left:4px}
+  .vid-label{color:#fff;font-size:13.5px;font-weight:600;text-align:center;line-height:1.45;max-width:340px}
+  .vid-label span{display:block;color:var(--beige);font-size:10.5px;letter-spacing:.2em;
+    text-transform:uppercase;font-weight:800;margin-bottom:6px}
+  .vid iframe{display:block;width:100%;aspect-ratio:16/9;border:0}
+  .welcome .vid{margin-top:22px;text-align:left}
+
   .err-note{background:#FFF3F2;border:1px solid #F3D2CF;color:#B3413A;font-size:13.5px;
     padding:11px 14px;border-radius:10px;line-height:1.55}
   .btn:disabled{opacity:.45;cursor:default}
-  @media(max-width:760px){.cmds{display:none}.nav .menu{gap:14px}}
+  @media(max-width:760px){
+    .nav{padding:0 18px}
+    .nav .menu{gap:14px}
+    #view-login h1{font-size:34px}
+    #view-login .hero{padding:44px 20px 32px}
+    #view-setup h2{font-size:27px}
+    .dash-body{flex-direction:column}
+    /* Antes esto era .cmds{display:none}: en el celular desaparecía TODO el
+       menú de comandos y el cliente no tenía forma de descubrir /semana.
+       Ahora es una fila horizontal que se desliza con el dedo. */
+    .cmds{width:100%;flex:0 0 auto;border-right:none;border-bottom:1px solid var(--border);
+      display:flex;gap:8px;overflow-x:auto;padding:12px 14px;-webkit-overflow-scrolling:touch}
+    .cmds .section-label{display:none}
+    .cmd{margin-bottom:0;flex:0 0 auto;white-space:nowrap}
+    .msgs{padding:20px 16px}
+    .msg{max-width:100%}
+    .composer{padding:12px 14px}
+  }
 </style>
 </head>
 <body>
@@ -132,6 +165,7 @@
       </div>
       <div class="err" id="login-err"></div>
     </div>
+    <div data-video="bienvenida"></div>
     <div class="login-foot">Herramienta exclusiva para clientes Founders</div>
   </div>
 </div>
@@ -153,6 +187,7 @@
       <span class="pill">Paso 1</span>
       <label>Tu Manual de Transformación (o sus partes clave)</label>
       <small>Mínimo: tu declaración de founder, tus frases firma, tu historia, tu voz y tus palabras prohibidas (Partes 4 y 6 del Manual).</small>
+      <div data-video="manual"></div>
       <textarea id="f-manual" placeholder="Pegá acá tu Manual (o las partes 4 y 6)…"></textarea>
     </div>
 
@@ -160,6 +195,7 @@
       <span class="pill">Paso 2</span>
       <label>Tu Oferta en Una Página</label>
       <small>Las 7 secciones completas: cliente, dolores, problema, promesa, pilares, bonos y garantía, precio.</small>
+      <div data-video="oferta"></div>
       <textarea id="f-oferta" placeholder="Pegá acá tu Oferta en Una Página completa…"></textarea>
     </div>
 
@@ -167,6 +203,7 @@
       <span class="pill">Paso 3</span>
       <label>Las frases textuales de tu encuesta</label>
       <small>El análisis de tu Match de Marca: las 3+ frases literales de tus clientes, el obstáculo y el miedo más mencionados.</small>
+      <div data-video="encuesta"></div>
       <textarea id="f-encuesta" placeholder="Pegá acá las frases exactas de tus clientes…"></textarea>
     </div>
 
@@ -207,7 +244,8 @@
         <div class="welcome" id="welcome">
           <div class="mark">↑</div>
           <h2>Hola, soy Synoma 👋</h2>
-          <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando a la izquierda o escribime abajo. Empezá por <b>📅 Mi semana</b> — en 2 minutos tenés tu plan.</p>
+          <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando del menú o escribime abajo. Empezá por <b>📅 Mi semana</b> — en 2 minutos tenés tu plan.</p>
+          <div data-video="comandos"></div>
         </div>
       </div>
       <div class="typing" id="typing">Synoma está escribiendo…</div>
@@ -222,6 +260,90 @@
 <div class="demo-pill" id="demo-pill">MODO DEMO — SIN CONEXIÓN AL MOTOR</div>
 
 <script>
+/* ---------- videos explicativos ----------------------------------------------
+   Pegá acá las URLs y listo. Vacío = no se muestra nada, la app funciona igual.
+   Sirven YouTube (público o "no listado"), Vimeo y Loom: el proveedor se detecta
+   solo, no hace falta buscar el código de embed.
+
+   El video NO se carga hasta que el cliente toca play. Tener cinco videos no
+   hace más lenta la página ni dispara pedidos a terceros al abrirla.
+----------------------------------------------------------------------------- */
+const VIDEOS = {
+  bienvenida: '',   // pantalla de acceso  — qué es Synoma y qué esperar
+  manual:     '',   // paso 1              — qué pegar del Manual de Transformación
+  oferta:     '',   // paso 2              — qué pegar de la Oferta en Una Página
+  encuesta:   '',   // paso 3              — de dónde salen las frases de la encuesta
+  comandos:   '',   // dashboard           — recorrido por los comandos
+};
+
+const VIDEO_LABELS = {
+  bienvenida: 'Cómo funciona Synoma',
+  manual:     'Qué tengo que pegar acá',
+  oferta:     'Qué tengo que pegar acá',
+  encuesta:   'De dónde saco estas frases',
+  comandos:   'Recorrido por los comandos',
+};
+
+function embedUrl(url){
+  const u = url.trim();
+  let m;
+  if((m = u.match(/youtu\.be\/([\w-]+)/)) || (m = u.match(/[?&]v=([\w-]+)/)))
+    return 'https://www.youtube-nocookie.com/embed/' + m[1] + '?autoplay=1&rel=0&modestbranding=1';
+  if((m = u.match(/vimeo\.com\/(?:video\/)?(\d+)(?:\/(\w+))?/)))
+    return 'https://player.vimeo.com/video/' + m[1] + '?autoplay=1' + (m[2] ? '&h=' + m[2] : '');
+  if((m = u.match(/loom\.com\/(?:share|embed)\/([\w-]+)/)))
+    return 'https://www.loom.com/embed/' + m[1] + '?autoplay=1';
+  return u;   // ya es una URL de embed
+}
+
+// Fachada: dibuja un botón de play con los colores de la casa y recién al clic
+// inserta el iframe.
+function mountVideo(slot){
+  const url = VIDEOS[slot];
+  if(!url) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'vid';
+
+  const btn = document.createElement('button');
+  btn.className = 'vid-facade';
+  btn.type = 'button';
+  const label = VIDEO_LABELS[slot] || 'Ver explicación';
+  btn.setAttribute('aria-label', 'Reproducir video: ' + label);
+
+  const play = document.createElement('div');
+  play.className = 'vid-play';
+  const cap = document.createElement('div');
+  cap.className = 'vid-label';
+  const kicker = document.createElement('span');
+  kicker.textContent = 'Video';
+  cap.appendChild(kicker);
+  cap.appendChild(document.createTextNode(label));
+  btn.appendChild(play);
+  btn.appendChild(cap);
+
+  btn.addEventListener('click', ()=>{
+    const f = document.createElement('iframe');
+    f.src = embedUrl(url);
+    f.title = label;
+    f.allow = 'autoplay; fullscreen; picture-in-picture';
+    f.allowFullscreen = true;
+    f.loading = 'lazy';
+    wrap.replaceChildren(f);
+  }, { once:true });
+
+  wrap.appendChild(btn);
+  return wrap;
+}
+
+function mountVideos(){
+  document.querySelectorAll('[data-video]').forEach(host=>{
+    if(host.firstChild) return;              // ya montado
+    const el = mountVideo(host.dataset.video);
+    if(el) host.appendChild(el);
+  });
+}
+
 const $ = id => document.getElementById(id);
 let CODE = localStorage.getItem('synoma_code') || '';
 let HISTORY = [];
@@ -448,6 +570,7 @@ $('input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ 
 $('code-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ login(); }});
 
 (async function boot(){
+  mountVideos();
   if(!CODE) return;
   if(getProfile()){ enterDash(); return; }
   const restored = await fetchBackup(CODE);
