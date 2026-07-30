@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Synoma Founders — Tu Motor de Contenido</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+  :root{
+    --black:#111111; --ink:#1c1c1c; --muted:#7A7A7A; --soft:#9A9A9A;
+    --bg:#FFFFFF; --paper:#FAFAF8; --cream:#F2EEE9;
+    --beige:#C4B49A; --beige-d:#A8946F; --border:#E6E1DA; --border2:#EFEBE4;
+    --nav-h:64px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);color:var(--ink);font-family:'Inter',sans-serif;min-height:100vh}
+  .kicker{font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--beige);font-weight:700}
+
+  /* ---------- NAVBAR (compartida) ---------- */
+  .nav{position:sticky;top:0;z-index:50;height:var(--nav-h);background:var(--black);display:flex;align-items:center;
+    justify-content:space-between;padding:0 28px}
+  .nav .word{color:#fff;font-weight:900;font-size:21px;letter-spacing:.01em}
+  .nav .word span{color:var(--beige)}
+  .nav .menu{display:flex;gap:26px;align-items:center}
+  .nav .menu a,.nav .menu button{background:none;border:none;color:#cfcfcf;font-size:11.5px;letter-spacing:.22em;
+    text-transform:uppercase;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
+  .nav .menu a:hover,.nav .menu button:hover{color:#fff}
+  .nav .menu .who{color:var(--beige);letter-spacing:.14em;font-size:11px}
+
+  .view{display:none}
+  .view.active{display:block}
+
+  /* ---------- componentes de la casa ---------- */
+  .section-label{display:flex;align-items:center;gap:14px;margin:34px 0 16px}
+  .section-label b{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--black);font-weight:800;white-space:nowrap}
+  .section-label::after{content:'';flex:1;height:1px;background:var(--border)}
+  .pill{display:inline-block;background:var(--beige);color:#fff;font-size:10px;font-weight:800;letter-spacing:.18em;
+    text-transform:uppercase;border-radius:99px;padding:4px 12px}
+  .btn{background:var(--black);border:none;border-radius:99px;padding:15px 28px;color:#fff;font-weight:700;font-size:14px;
+    cursor:pointer;font-family:'Inter',sans-serif;transition:opacity .15s}
+  .btn:hover{opacity:.8}
+  .link-beige{color:var(--beige-d);font-weight:600;font-size:13.5px;text-decoration:none;cursor:pointer}
+
+  /* ---------- LOGIN ---------- */
+  #view-login .hero{max-width:680px;margin:0 auto;padding:72px 24px 40px;text-align:center}
+  .mark{width:52px;height:52px;border-radius:14px;background:var(--black);color:#fff;display:inline-flex;align-items:center;
+    justify-content:center;font-weight:900;font-size:24px;margin-bottom:26px}
+  #view-login .kicker{display:block;margin-bottom:12px}
+  #view-login h1{font-size:46px;font-weight:800;line-height:1.06;color:var(--black);letter-spacing:-.02em}
+  #view-login .sub{color:var(--muted);max-width:440px;margin:16px auto 34px;font-size:15.5px;line-height:1.6}
+  .code-card{max-width:520px;margin:0 auto;background:var(--bg);border:1px solid var(--border);border-radius:16px;
+    padding:26px;position:relative;text-align:left}
+  .code-card .pill{position:absolute;top:-11px;right:18px}
+  .code-card label{font-weight:700;font-size:14px;display:block;margin-bottom:4px}
+  .code-card small{color:var(--muted);font-size:12.5px;display:block;margin-bottom:14px}
+  .code-row{display:flex;gap:10px}
+  .code-row input{flex:1;background:var(--paper);border:1px solid var(--border);border-radius:12px;padding:15px 18px;
+    color:var(--black);font-size:15px;letter-spacing:.2em;text-transform:uppercase;text-align:center;outline:none;font-weight:700;
+    font-family:'Inter',sans-serif}
+  .code-row input:focus{border-color:var(--beige)}
+  .err{color:#e25950;font-size:13px;min-height:18px;margin-top:10px}
+  .login-foot{text-align:center;color:var(--soft);font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin-top:40px;font-weight:600}
+
+  /* ---------- SETUP ---------- */
+  #view-setup .wrap{max-width:760px;margin:0 auto;padding:48px 24px 80px}
+  #view-setup h2{font-size:34px;font-weight:800;letter-spacing:-.02em;color:var(--black);margin:8px 0 10px}
+  #view-setup .sub{color:var(--muted);font-size:14.5px;line-height:1.6;max-width:560px}
+  .step-card{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:22px 24px;margin-top:26px;position:relative}
+  .step-card .pill{position:absolute;top:-11px;right:18px}
+  .step-card label{font-weight:700;font-size:14.5px;display:block;margin-bottom:4px;color:var(--black)}
+  .step-card small{color:var(--muted);font-size:12.5px;line-height:1.5;display:block;margin-bottom:12px}
+  .step-card textarea{width:100%;min-height:120px;background:var(--paper);border:1px solid var(--border2);border-radius:12px;
+    padding:13px 15px;color:var(--ink);font-size:14px;line-height:1.55;resize:vertical;outline:none;font-family:'Inter',sans-serif}
+  .step-card textarea:focus{border-color:var(--beige);background:#fff}
+  #view-setup .btn{margin-top:30px}
+
+  /* ---------- DASHBOARD ---------- */
+  #view-dash.active{display:flex;flex-direction:column;height:100vh}
+  .dash-body{display:flex;flex:1;min-height:0}
+  .cmds{width:264px;border-right:1px solid var(--border);padding:8px 16px 20px;overflow-y:auto;background:var(--bg)}
+  .cmds .section-label{margin:22px 0 10px}
+  .cmds .section-label b{font-size:10.5px;color:var(--beige-d)}
+  .cmd{display:flex;align-items:center;gap:11px;width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:12px;
+    padding:11px 13px;color:var(--ink);font-size:13.5px;cursor:pointer;text-align:left;font-weight:600;margin-bottom:8px;
+    font-family:'Inter',sans-serif;transition:border-color .12s}
+  .cmd:hover{border-color:var(--beige)}
+  .cmd .em{font-size:16px}
+  .chat{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--paper)}
+  .msgs{flex:1;overflow-y:auto;padding:30px 36px;display:flex;flex-direction:column;gap:16px}
+  .msg{max-width:820px;padding:16px 20px;border-radius:16px;font-size:14.5px;line-height:1.65;white-space:pre-wrap}
+  .msg.user{align-self:flex-end;background:var(--black);color:#fff;border-bottom-right-radius:6px}
+  .msg.bot{align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:6px}
+  .msg.bot b{color:var(--black)}
+  .msg .tag{display:inline-block;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--beige-d);font-weight:800;margin-bottom:8px}
+  .welcome{align-self:center;text-align:center;color:var(--muted);max-width:540px;margin-top:9vh}
+  .welcome .mark{margin-bottom:18px}
+  .welcome h2{font-size:28px;font-weight:800;letter-spacing:-.02em;color:var(--black);margin-bottom:8px}
+  .welcome p{font-size:14.5px;line-height:1.6}
+  .composer{display:flex;gap:12px;padding:16px 26px;border-top:1px solid var(--border);background:var(--bg)}
+  .composer textarea{flex:1;background:var(--paper);border:1px solid var(--border);border-radius:12px;padding:14px 16px;
+    color:var(--ink);font-size:14px;resize:none;height:52px;outline:none;font-family:'Inter',sans-serif}
+  .composer textarea:focus{border-color:var(--beige);background:#fff}
+  .typing{color:var(--muted);font-size:13px;padding:0 36px 10px;display:none;background:var(--paper)}
+  .demo-pill{position:fixed;bottom:14px;right:16px;background:#FFF7E8;border:1px solid #EAD9B0;
+    color:#A8946F;font-size:11px;font-weight:700;padding:6px 12px;border-radius:99px;display:none;letter-spacing:.06em}
+  @media(max-width:760px){.cmds{display:none}.nav .menu{gap:14px}}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div class="view active" id="view-login">
+  <div class="nav">
+    <div class="word">SYN<span>O</span>MA</div>
+    <div class="menu"><a>Founders · Business Strategists</a></div>
+  </div>
+  <div class="hero">
+    <div class="mark">↑</div>
+    <span class="kicker">Founders · Business Strategists</span>
+    <h1>Tu Motor<br>de Contenido, ⚡</h1>
+    <p class="sub">Entrá con tu código de cliente. Acá adentro está tu asistente entrenado con tu identidad, tu oferta y las palabras de tus clientes.</p>
+    <div class="code-card">
+      <span class="pill">Acceso</span>
+      <label>Tu código Founders</label>
+      <small>Te lo dio tu coach por Telegram. Si no lo tenés, pedíselo.</small>
+      <div class="code-row">
+        <input id="code-input" placeholder="FND-XXXX" maxlength="12" autocomplete="off">
+        <button class="btn" onclick="login()">Entrar →</button>
+      </div>
+      <div class="err" id="login-err"></div>
+    </div>
+    <div class="login-foot">Herramienta exclusiva para clientes Founders</div>
+  </div>
+</div>
+
+<!-- ============ SETUP ============ -->
+<div class="view" id="view-setup">
+  <div class="nav">
+    <div class="word">SYN<span>O</span>MA</div>
+    <div class="menu"><a>Configuración inicial</a></div>
+  </div>
+  <div class="wrap">
+    <span class="kicker">Una sola vez · 5 minutos</span>
+    <h2>Cargá tu identidad 👋</h2>
+    <p class="sub">Esto es lo que hace que Synoma escriba como VOS y no como un robot genérico. Copiá y pegá desde tus documentos de Founders — cuanto más completo, mejor escribe. Se irán activando tus comandos a medida que completes los pasos.</p>
+
+    <div class="section-label"><b>Completá ahora</b></div>
+
+    <div class="step-card">
+      <span class="pill">Paso 1</span>
+      <label>Tu Manual de Transformación (o sus partes clave)</label>
+      <small>Mínimo: tu declaración de founder, tus frases firma, tu historia, tu voz y tus palabras prohibidas (Partes 4 y 6 del Manual).</small>
+      <textarea id="f-manual" placeholder="Pegá acá tu Manual (o las partes 4 y 6)…"></textarea>
+    </div>
+
+    <div class="step-card">
+      <span class="pill">Paso 2</span>
+      <label>Tu Oferta en Una Página</label>
+      <small>Las 7 secciones completas: cliente, dolores, problema, promesa, pilares, bonos y garantía, precio.</small>
+      <textarea id="f-oferta" placeholder="Pegá acá tu Oferta en Una Página completa…"></textarea>
+    </div>
+
+    <div class="step-card">
+      <span class="pill">Paso 3</span>
+      <label>Las frases textuales de tu encuesta</label>
+      <small>El análisis de tu Match de Marca: las 3+ frases literales de tus clientes, el obstáculo y el miedo más mencionados.</small>
+      <textarea id="f-encuesta" placeholder="Pegá acá las frases exactas de tus clientes…"></textarea>
+    </div>
+
+    <button class="btn" onclick="saveSetup()">Guardar y entrar a mi dashboard →</button>
+  </div>
+</div>
+
+<!-- ============ DASHBOARD ============ -->
+<div class="view" id="view-dash">
+  <div class="nav">
+    <div class="word">SYN<span>O</span>MA</div>
+    <div class="menu">
+      <span class="who" id="who"></span>
+      <button onclick="showSetup()">Mi identidad</button>
+      <button onclick="logout()">Salir</button>
+    </div>
+  </div>
+  <div class="dash-body">
+    <div class="cmds">
+      <div class="section-label"><b>Planificar</b></div>
+      <button class="cmd" onclick="runCmd('/semana')"><span class="em">📅</span> Mi semana de contenido</button>
+      <button class="cmd" onclick="askCmd('/idea','¿Sobre qué tema?')"><span class="em">💡</span> Ideas sobre un tema</button>
+      <div class="section-label"><b>Crear</b></div>
+      <button class="cmd" onclick="askCmd('/guion','¿Qué idea convertimos en guion?')"><span class="em">🎬</span> Guion yapping</button>
+      <button class="cmd" onclick="askCmd('/gancho','¿Tema para los ganchos?')"><span class="em">🪝</span> 10 ganchos</button>
+      <button class="cmd" onclick="runCmd('/historias')"><span class="em">📱</span> Historias de hoy</button>
+      <button class="cmd" onclick="runCmd('/venta')"><span class="em">🔥</span> Pieza de venta</button>
+      <button class="cmd" onclick="askCmd('/post','¿Qué idea convertimos en post?')"><span class="em">📝</span> Post / carrusel</button>
+      <div class="section-label"><b>Mejorar</b></div>
+      <button class="cmd" onclick="askCmd('/repurpose','Pegá el contenido a reciclar:')"><span class="em">♻️</span> Reciclar contenido</button>
+      <button class="cmd" onclick="askCmd('/revisar','Pegá tu borrador:')"><span class="em">🔍</span> Revisar mi borrador</button>
+      <button class="cmd" onclick="askCmd('/objecion','Pegá el comentario o DM:')"><span class="em">💬</span> Responder objeción</button>
+      <div class="section-label"><b>Medir</b></div>
+      <button class="cmd" onclick="runCmd('/racha')"><span class="em">📊</span> Mi racha semanal</button>
+    </div>
+    <div class="chat">
+      <div class="msgs" id="msgs">
+        <div class="welcome" id="welcome">
+          <div class="mark">↑</div>
+          <h2>Hola, soy Synoma 👋</h2>
+          <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando a la izquierda o escribime abajo. Empezá por <b>📅 Mi semana</b> — en 2 minutos tenés tu plan.</p>
+        </div>
+      </div>
+      <div class="typing" id="typing">Synoma está escribiendo…</div>
+      <div class="composer">
+        <textarea id="input" placeholder="Escribile a Synoma… (Enter para enviar)"></textarea>
+        <button class="btn" onclick="send()">Enviar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="demo-pill" id="demo-pill">MODO DEMO — SIN CONEXIÓN AL MOTOR</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let CODE = localStorage.getItem('synoma_code') || '';
+let HISTORY = [];
+
+function show(view){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  $(view).classList.add('active');
+}
+function profileKey(){ return 'synoma_profile_' + CODE; }
+function getProfile(){ try{ return JSON.parse(localStorage.getItem(profileKey())||'null'); }catch(e){ return null; } }
+
+function login(){
+  const c = $('code-input').value.trim().toUpperCase();
+  if(c.length < 4){ $('login-err').textContent = 'Ingresá el código que te dio tu coach.'; return; }
+  CODE = c; localStorage.setItem('synoma_code', c);
+  if(getProfile()){ enterDash(); } else { show('view-setup'); }
+}
+function saveSetup(){
+  const p = { manual:$('f-manual').value.trim(), oferta:$('f-oferta').value.trim(), encuesta:$('f-encuesta').value.trim() };
+  if(!p.oferta){ alert('Como mínimo pegá tu Oferta en Una Página — sin eso Synoma escribe genérico.'); return; }
+  localStorage.setItem(profileKey(), JSON.stringify(p));
+  enterDash();
+}
+function showSetup(){
+  const p = getProfile()||{};
+  $('f-manual').value = p.manual||''; $('f-oferta').value = p.oferta||''; $('f-encuesta').value = p.encuesta||'';
+  show('view-setup');
+}
+function enterDash(){ $('who').textContent = CODE; show('view-dash'); }
+function logout(){ localStorage.removeItem('synoma_code'); CODE=''; HISTORY=[]; location.reload(); }
+
+function addMsg(role, text, tag){
+  const w = $('welcome'); if(w) w.remove();
+  const d = document.createElement('div');
+  d.className = 'msg ' + (role==='user'?'user':'bot');
+  if(tag){ const t=document.createElement('div'); t.className='tag'; t.textContent=tag; d.appendChild(t); }
+  const body=document.createElement('div');
+  body.innerHTML = text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>').replace(/\n/g,'<br>');
+  d.appendChild(body);
+  $('msgs').appendChild(d);
+  $('msgs').scrollTop = $('msgs').scrollHeight;
+}
+
+function askCmd(cmd, hint){
+  $('input').value = cmd + ' ';
+  $('input').placeholder = hint;
+  $('input').focus();
+}
+function runCmd(cmd){ $('input').value = cmd; send(); }
+
+async function send(){
+  const text = $('input').value.trim();
+  if(!text) return;
+  $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
+  addMsg('user', text);
+  HISTORY.push({role:'user', content:text});
+  $('typing').style.display='block';
+  try{
+    const res = await fetch('/.netlify/functions/synoma', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code: CODE, profile: getProfile(), messages: HISTORY.slice(-12) })
+    });
+    if(!res.ok) throw new Error('backend');
+    const data = await res.json();
+    HISTORY.push({role:'assistant', content:data.text});
+    addMsg('bot', data.text, 'Synoma');
+  }catch(e){
+    $('demo-pill').style.display='block';
+    const demo = demoReply(text);
+    HISTORY.push({role:'assistant', content:demo});
+    addMsg('bot', demo, 'Synoma · demo');
+  }
+  $('typing').style.display='none';
+}
+
+function demoReply(text){
+  if(text.startsWith('/semana')) return "**Tu semana de contenido** (ejemplo de demo — con el motor conectado, esto sale de TU oferta y TU encuesta):\n\n**Lunes · Reel yapping · Dolor 1** — Gancho: \"Si estás cansada todo el día y ya probaste mil dietas, esto es para vos.\" Punteo: por qué las dietas genéricas fallan → qué mirar primero → mini acción de hoy. Sin venta.\n\n**Martes · Historias** — 3 historias: detrás de escena + encuesta \"¿te pasa X?\" + respuesta.\n\n**Miércoles · Reel yapping · Pilar 1** — educativo.\n\n**Jueves · Post carrusel · contracorriente** — \"Lo que tu nutricionista no te dice\".\n\n**Viernes · Reel con intención de venta** — dolor → promesa → llamado a la acción.\n\n🎬 Grabá todo el martes en UNA tanda. Repetición, no perfección.";
+  return "⚡ **Modo demo:** el motor todavía no está conectado (falta el deploy con la API). Cuando esté activo, acá te respondo con TU voz, TU oferta y las palabras de TUS clientes.\n\nProbá el botón **📅 Mi semana** para ver un ejemplo del formato.";
+}
+
+$('input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
+$('code-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ login(); }});
+
+if(CODE && getProfile()){ enterDash(); } else if(CODE){ show('view-setup'); }
+</script>
+</body>
+</html>
