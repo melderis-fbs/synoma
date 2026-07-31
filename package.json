@@ -8,10 +8,13 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@netlify/blobs": "^8.1.0"
+    "@neondatabase/serverless": "^1.1.0",
+    "@netlify/blobs": "^8.1.0",
+    "pg": "^8.22.0"
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "migrar": "node scripts/migrar.js",
     "dev": "netlify dev",
     "deploy": "netlify deploy --prod"
   }

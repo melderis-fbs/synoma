@@ -1,4 +1,8 @@
 [build]
+  # Aplica las migraciones de db/*.sql antes de publicar. Así las tablas se
+  # crean solas en cada deploy y no hay que abrir una terminal nunca.
+  command = "npm run migrar"
+
   # Antes era publish = "." — publicaba TODA la raíz del repo, incluido
   # README-DEPLOY.md (que nombra quién compró la API key, el formato de los
   # códigos de acceso y el costo por cliente). Con "public" solo se publica
