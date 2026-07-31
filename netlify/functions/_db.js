@@ -29,6 +29,12 @@ export function urlDeBase() {
 
 let _sql = null;
 
+// Costura para los tests: permite inyectar una base falsa y así probar la lógica
+// de las funciones sin un Postgres corriendo. Solo la usan los tests.
+export function usarSqlDePrueba(fn) {
+  _sql = fn;
+}
+
 // Devuelve la función de consultas. Se cachea entre invocaciones que reusan el
 // mismo contenedor.
 export function getSql() {

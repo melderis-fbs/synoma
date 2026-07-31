@@ -1,27 +1,33 @@
 // Synoma Founders — motor de contenido
 //
-// Función serverless (Netlify Functions 2.0): valida el código del cliente,
-// arma el prompt con su perfil y hace streaming de la respuesta de Claude.
+// Función serverless (Netlify Functions 2.0): identifica al cliente por su
+// cookie de sesión, arma el prompt con su perfil y hace streaming de la
+// respuesta de Claude.
 //
 // El prompt del sistema vive en ./_prompt.js — editalo ahí, no acá.
 //
+// Ya no hay códigos compartidos: el cliente se identifica por sesión (_auth.js),
+// y el perfil y el contador de uso viven en la base de datos (_perfil.js). Eso
+// cambia algo importante: antes el perfil lo mandaba el navegador en cada
+// pedido, así que un navegador con el localStorage limpio enviaba un perfil
+// vacío y Synoma escribía genérico sin que nadie se enterara.
+//
 // Variables de entorno:
 //   ANTHROPIC_API_KEY       (requerida)  sk-ant-...
-//   SYNOMA_CODES            (requerida)  FND-ANA1,FND-LUZ2,FND-PAB3
-//   SYNOMA_DAILY_LIMIT      (opcional)   mensajes por código por día. Default 60.
+//   SYNOMA_DAILY_LIMIT      (opcional)   mensajes por cliente por día. Default 60.
+//   RENOVACION_URL          (opcional)   a dónde mandar a quien terminó el programa.
 //   SYNOMA_ALLOWED_ORIGINS  (opcional)   solo si la app se sirve desde OTRO dominio.
-//                                        Vacío = únicamente mismo origen (lo normal).
 
-import { getStore } from '@netlify/blobs';
 import { SYSTEM_BASE } from './_prompt.js';
+import { clienteDeSesion } from './_auth.js';
+import { urlDeBase } from './_db.js';
+import { leerPerfil, bloqueDePerfil, mensajesDeHoy, registrarUso } from './_perfil.js';
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 2500;
 const HISTORY_TURNS = 12;
+const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
-
-// Topes de tamaño del perfil, iguales a la v1.
-const LIMITS = { manual: 30000, oferta: 15000, encuesta: 10000, message: 20000 };
 
 export default async (req) => {
   const cors = corsFor(req);
@@ -29,7 +35,6 @@ export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
   if (req.method !== 'POST') return fail(405, 'method_not_allowed', 'Usá POST.', cors);
 
-  // --- Chequeo de origen (del lado del servidor) ---------------------------
   // CORS solo evita que un sitio ajeno LEA la respuesta; la llamada igual se
   // ejecuta y consume tokens. Este chequeo la rechaza antes de gastar plata.
   if (!originAllowed(req)) {
@@ -37,14 +42,30 @@ export default async (req) => {
   }
 
   // --- Config del servidor -------------------------------------------------
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  const validCodes = parseCodes(process.env.SYNOMA_CODES);
-
-  // 503 = "el motor no está configurado". Es la ÚNICA condición que habilita
-  // el modo demo en el front. Cualquier otro error se muestra como error.
-  if (!apiKey || validCodes.length === 0) {
+  // 503 = "el motor no está configurado". Es la ÚNICA condición que habilita el
+  // modo demo en el front. Cualquier otro error se muestra como error.
+  if (!process.env.ANTHROPIC_API_KEY || !urlDeBase()) {
     return fail(503, 'not_configured',
       'El motor todavía no está configurado en el servidor.', cors);
+  }
+
+  // --- ¿Quién es? ----------------------------------------------------------
+  let cliente;
+  try {
+    cliente = await clienteDeSesion(req);
+  } catch (e) {
+    console.error('[synoma] fallo leyendo la sesión:', e?.message ?? e);
+    return fail(503, 'db_error', 'No podemos verificar tu sesión ahora mismo.', cors);
+  }
+
+  if (!cliente) {
+    return fail(401, 'sin_sesion', 'Tu sesión venció. Volvé a entrar con tu email.', cors);
+  }
+  if (cliente.suspendido) {
+    return fail(403, 'acceso_terminado',
+      'Tu acceso a Synoma terminó junto con el programa.', cors,
+      { detalle: 'Podés seguir usándolo renovando tu acceso.',
+        renovacion_url: process.env.RENOVACION_URL || null });
   }
 
   // --- Payload -------------------------------------------------------------
@@ -55,32 +76,36 @@ export default async (req) => {
     return fail(400, 'bad_json', 'El cuerpo de la petición no es JSON válido.', cors);
   }
 
-  const code = normalizeCode(payload?.code);
-  const profile = payload?.profile ?? {};
   const messages = payload?.messages;
-
-  if (!code || !validCodes.includes(code)) {
-    // Diagnóstico sin volcar códigos completos al log. Comparar los largos
-    // distingue "lo escribió mal" de "llegó cortado" o "la variable no tiene
-    // lo que creemos que tiene".
-    console.warn('[synoma] código rechazado:', JSON.stringify({
-      recibido: code ? `${code.slice(0, 4)}…(${code.length} car.)` : '(vacío)',
-      codigos_cargados: validCodes.length,
-      largos_cargados: validCodes.map((c) => c.length),
-    }));
-    return fail(403, 'invalid_code',
-      'Código inválido o vencido. Consultá a tu coach.', cors);
-  }
   if (!Array.isArray(messages) || messages.length === 0) {
     return fail(400, 'no_messages', 'No llegó ningún mensaje.', cors);
   }
 
-  // --- Tope de uso por código y por día ------------------------------------
+  // --- Tope de uso por cliente y por día -----------------------------------
   const limit = Number(process.env.SYNOMA_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
-  const usage = await bumpUsage(code, limit);
-  if (usage.exceeded) {
-    return fail(429, 'daily_limit',
-      `Llegaste al tope de ${limit} mensajes por hoy. Mañana se renueva.`, cors);
+  try {
+    if (await mensajesDeHoy(cliente.id) >= limit) {
+      return fail(429, 'daily_limit',
+        `Llegaste al tope de ${limit} mensajes por hoy. Mañana se renueva.`, cors);
+    }
+  } catch (e) {
+    // Si el contador falla se deja pasar: un problema de medición no debería
+    // tumbar el producto. Queda en el log para poder detectarlo.
+    console.warn('[synoma] no se pudo leer el uso del día:', e?.message ?? e);
+  }
+
+  // --- El perfil sale de la base, no del navegador --------------------------
+  let perfil = null;
+  try {
+    perfil = await leerPerfil(cliente.id);
+  } catch (e) {
+    console.error('[synoma] fallo leyendo el perfil:', e?.message ?? e);
+    return fail(503, 'db_error', 'No pudimos leer tu identidad. Probá de nuevo.', cors);
+  }
+
+  if (!perfil?.oferta) {
+    return fail(409, 'sin_perfil',
+      'Primero cargá tu identidad: sin tu Oferta en Una Página, Synoma escribe genérico.', cors);
   }
 
   // --- System prompt en dos bloques cacheables -----------------------------
@@ -89,18 +114,18 @@ export default async (req) => {
   // Las lecturas de caché cuestan el 10% del precio normal de entrada.
   const system = [
     { type: 'text', text: SYSTEM_BASE, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: profileBlock(profile), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: bloqueDePerfil(perfil), cache_control: { type: 'ephemeral' } },
   ];
 
   const trimmed = messages.slice(-HISTORY_TURNS).map((m) => ({
     role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: String(m.content ?? '').slice(0, LIMITS.message),
+    content: String(m.content ?? '').slice(0, MAX_CHARS_MENSAJE),
   }));
 
   // --- Llamada a Claude, con streaming y reintentos ------------------------
   let upstream;
   try {
-    upstream = await callClaude({ apiKey, system, messages: trimmed });
+    upstream = await callClaude({ apiKey: process.env.ANTHROPIC_API_KEY, system, messages: trimmed });
   } catch (e) {
     console.error('[synoma] fallo llamando a Anthropic:', e?.message ?? e);
     return fail(502, 'upstream_error',
@@ -109,7 +134,7 @@ export default async (req) => {
 
   // A partir de acá el stream ya arrancó: los errores se emiten DENTRO del
   // stream, porque los headers HTTP ya salieron.
-  return new Response(toNdjson(upstream.body, code), {
+  return new Response(toNdjson(upstream.body, cliente), {
     status: 200,
     headers: {
       ...cors,
@@ -168,12 +193,12 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
 // Traducción del SSE de Anthropic a NDJSON simple para el navegador
 // ---------------------------------------------------------------------------
 
-// Se emite una línea de JSON por evento. El navegador lo lee incremental sin
-// necesitar un parser de SSE:
+// Una línea de JSON por evento. El navegador lo lee incremental sin necesitar un
+// parser de SSE:
 //   {"type":"text","text":"..."}                    fragmento de texto
 //   {"type":"done","usage":{...}}                   terminó bien
 //   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
-function toNdjson(body, code) {
+function toNdjson(body, cliente) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -230,9 +255,12 @@ function toNdjson(body, code) {
             message: 'El motor devolvió una respuesta vacía. Probá de nuevo.',
           });
         } else {
-          // usage queda en los logs de Netlify: sirve para ver el costo real
-          // por cliente, incluido cuánto ahorró el caché.
-          if (usage) console.log('[synoma] uso', JSON.stringify({ code, ...usage }));
+          if (usage) {
+            // Sin await: registrar el uso no debe demorar la respuesta ni
+            // tumbarla si la base está lenta.
+            registrarUso(cliente.id, usage).catch((e) =>
+              console.error('[synoma] no se pudo registrar el uso:', e?.message ?? e));
+          }
           emit({ type: 'done', usage });
         }
       } catch (e) {
@@ -253,75 +281,9 @@ function toNdjson(body, code) {
 // Auxiliares
 // ---------------------------------------------------------------------------
 
-function profileBlock(p) {
-  const part = (v, max, vacio) => {
-    const s = String(v ?? '').trim();
-    return s ? s.slice(0, max) : vacio;
-  };
-  return [
-    '=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===',
-    '--- SU MANUAL DE TRANSFORMACIÓN ---',
-    part(p.manual, LIMITS.manual, '(no cargado — pedile que lo cargue en "Mi identidad")'),
-    '--- SU OFERTA EN UNA PÁGINA ---',
-    part(p.oferta, LIMITS.oferta, '(no cargada)'),
-    '--- FRASES TEXTUALES DE SU ENCUESTA ---',
-    part(p.encuesta, LIMITS.encuesta, '(no cargadas)'),
-    '=== FIN DEL PERFIL ===',
-  ].join('\n');
-}
-
-// Normaliza un código para comparar. Se aplica a los DOS lados (lo que escribe
-// el cliente y lo que está en SYNOMA_CODES), así que no importa de dónde salió
-// cada uno.
-//
-// Existe porque un código que pasó por Notas, Word, WhatsApp o un mail llega
-// con el guion cambiado por un guion largo (– en lugar de -) o con espacios
-// invisibles pegados. A la vista es idéntico; al comparar textos no lo es, y el
-// cliente recibe "código inválido" sin ninguna explicación posible.
-export function normalizeCode(raw) {
-  return String(raw ?? '')
-    .normalize('NFKC')                                 // unifica formas Unicode equivalentes
-    .replace(/[\u2010-\u2015\u2212]/g, '-')            // guiones tipográficos (– —) → guion común
-    .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')    // espacios, incluidos los invisibles
-    .replace(/-/g, '')                                 // el guion es decorativo, no identifica
-    .toUpperCase();
-}
-
-function parseCodes(raw) {
-  const codes = String(raw ?? '').split(',').map(normalizeCode).filter(Boolean);
-
-  // Si dos códigos distintos normalizan al mismo texto, uno tapa al otro y el
-  // cliente afectado no puede entrar nunca. Es raro, pero silencioso.
-  const dupes = codes.filter((c, i) => codes.indexOf(c) !== i);
-  if (dupes.length) {
-    console.error('[synoma] hay códigos duplicados en SYNOMA_CODES:', dupes.length);
-  }
-  return codes;
-}
-
-// Cuenta mensajes por código y por día en Netlify Blobs.
-//
-// Decisión consciente: si Blobs falla, se deja pasar la petición (fail open)
-// en lugar de bloquearla. Un problema del contador no debería tumbar el
-// producto. El costo es que durante una caída de Blobs no hay tope — la
-// protección de fondo sigue siendo el chequeo de origen y el de código.
-async function bumpUsage(code, limit) {
-  try {
-    const store = getStore('synoma-uso');
-    const key = `${code}:${new Date().toISOString().slice(0, 10)}`; // FND-ANA1:2026-07-30
-    const current = Number((await store.get(key)) ?? 0);
-    if (current >= limit) return { exceeded: true, count: current };
-    await store.set(key, String(current + 1));
-    return { exceeded: false, count: current + 1 };
-  } catch (e) {
-    console.warn('[synoma] contador de uso no disponible, se deja pasar:', e?.message ?? e);
-    return { exceeded: false, count: -1 };
-  }
-}
-
 // Sin CORS por defecto: la app se sirve del mismo dominio que la función, así
 // que no lo necesita. Antes estaba en '*', que habilitaba a cualquier sitio del
-// mundo a llamar la función con un código filtrado.
+// mundo a llamar la función.
 function corsFor(req) {
   const allowed = parseOrigins(process.env.SYNOMA_ALLOWED_ORIGINS);
   const origin = req.headers.get('origin');
@@ -330,15 +292,15 @@ function corsFor(req) {
     'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Credentials': 'true',
     Vary: 'Origin',
   };
 }
 
 function originAllowed(req) {
   const origin = req.headers.get('origin');
-  if (!origin) return true; // mismo origen (o cliente no-navegador: lo frena el código + el tope)
-  const allowed = parseOrigins(process.env.SYNOMA_ALLOWED_ORIGINS);
-  if (allowed.includes(origin)) return true;
+  if (!origin) return true; // mismo origen
+  if (parseOrigins(process.env.SYNOMA_ALLOWED_ORIGINS).includes(origin)) return true;
   try {
     return new URL(origin).host === new URL(req.url).host;
   } catch {
@@ -353,8 +315,8 @@ function parseOrigins(raw) {
     .filter(Boolean);
 }
 
-function fail(status, error, message, cors) {
-  return new Response(JSON.stringify({ error, message }), {
+function fail(status, error, message, cors, extra = {}) {
+  return new Response(JSON.stringify({ error, message, ...extra }), {
     status,
     headers: { ...cors, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });

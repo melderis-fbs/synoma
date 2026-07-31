@@ -1,99 +1,73 @@
-// Synoma Founders — respaldo del perfil del cliente
+// Synoma Founders — la identidad de marca del cliente
 //
-// El perfil (Manual + Oferta + encuesta) vivía SOLO en el localStorage del
-// navegador. Safari borra el localStorage escrito por JavaScript a los 7 días
-// sin visitar el sitio, así que un cliente de iPhone que usa Synoma cada dos
-// semanas tenía que volver a pegar tres documentos largos cada vez.
+//   GET  /api/perfil  → { perfil } | { perfil: null } si todavía no cargó nada
+//   PUT  /api/perfil  → { ok: true }   body: { manual, oferta, encuesta }
 //
-// Esta función guarda una copia en Netlify Blobs, indexada por código. El
-// localStorage sigue siendo la copia rápida local; esto es la red de seguridad.
+// El cliente se identifica por su cookie de sesión. Nunca se acepta un id ni un
+// email por parámetro: si no, cualquiera podría leer o escribir el perfil de
+// otro cambiando un valor en la petición.
 //
-//   GET  /api/perfil?code=FND-ANA1   → { profile } | 404 si no hay respaldo
-//   PUT  /api/perfil                 → { ok: true }   body: { code, profile }
-//
-// Nota de privacidad: el perfil ya salía del navegador en cada mensaje (va
-// dentro del prompt hacia la API de Claude). Guardarlo en tu propia cuenta de
-// Netlify no agrega una exposición nueva, pero sí te vuelve responsable de esos
-// datos: son documentos de negocio de tus clientes. Si preferís no guardarlos,
-// borrá esta función y el bloque `respaldo` de public/index.html.
+// Antes esto vivía solo en el localStorage del navegador. Safari borra el
+// localStorage escrito por JavaScript a los 7 días sin visitar el sitio, así que
+// un cliente de iPhone que usaba Synoma cada dos semanas tenía que volver a
+// pegar tres documentos largos cada vez.
 
-import { getStore } from '@netlify/blobs';
-
-const LIMITS = { manual: 30000, oferta: 15000, encuesta: 10000 };
+import { urlDeBase } from './_db.js';
+import { clienteDeSesion } from './_auth.js';
+import { leerPerfil, guardarPerfil, LIMITES_PERFIL } from './_perfil.js';
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
+  if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
+  if (!urlDeBase()) return json(503, { error: 'not_configured' });
 
-  if (!originAllowed(req)) {
-    return json(403, { error: 'forbidden_origin', message: 'Origen no permitido.' });
-  }
-
-  const validCodes = parseCodes(process.env.SYNOMA_CODES);
-  if (validCodes.length === 0) {
-    return json(503, { error: 'not_configured', message: 'Servidor sin configurar.' });
-  }
-
-  let store;
+  let cliente;
   try {
-    store = getStore('synoma-perfiles');
+    cliente = await clienteDeSesion(req);
   } catch (e) {
-    console.warn('[perfil] Blobs no disponible:', e?.message ?? e);
-    return json(503, { error: 'storage_unavailable', message: 'Respaldo no disponible.' });
+    console.error('[perfil] fallo leyendo la sesión:', e?.message ?? e);
+    return json(503, { error: 'db_error' });
   }
 
-  // --- Leer el respaldo ----------------------------------------------------
+  if (!cliente) {
+    return json(401, { error: 'sin_sesion', message: 'Tu sesión venció. Volvé a entrar con tu email.' });
+  }
+  if (cliente.suspendido) {
+    return json(403, {
+      error: 'acceso_terminado',
+      message: 'Tu acceso a Synoma terminó junto con el programa.',
+      renovacion_url: process.env.RENOVACION_URL || null,
+    });
+  }
+
+  // --- Leer ----------------------------------------------------------------
   if (req.method === 'GET') {
-    const code = normalize(new URL(req.url).searchParams.get('code'));
-    if (!validCodes.includes(code)) {
-      return json(403, { error: 'invalid_code', message: 'Código inválido o vencido.' });
-    }
     try {
-      const stored = await store.get(code, { type: 'json' });
-      if (!stored) return json(404, { error: 'no_backup', message: 'Sin respaldo guardado.' });
-      return json(200, { profile: stored });
+      const perfil = await leerPerfil(cliente.id);
+      return json(200, { perfil: perfil ?? null, limites: LIMITES_PERFIL });
     } catch (e) {
-      console.error('[perfil] fallo leyendo respaldo:', e?.message ?? e);
-      return json(502, { error: 'read_failed', message: 'No se pudo leer el respaldo.' });
+      console.error('[perfil] fallo leyendo:', e?.message ?? e);
+      return json(503, { error: 'db_error', message: 'No pudimos leer tu identidad.' });
     }
   }
 
-  // --- Guardar el respaldo -------------------------------------------------
+  // --- Guardar -------------------------------------------------------------
   if (req.method === 'PUT') {
-    let payload;
-    try {
-      payload = await req.json();
-    } catch {
-      return json(400, { error: 'bad_json', message: 'Cuerpo no es JSON válido.' });
-    }
-
-    const code = normalize(payload?.code);
-    if (!validCodes.includes(code)) {
-      return json(403, { error: 'invalid_code', message: 'Código inválido o vencido.' });
-    }
-
-    const p = payload?.profile ?? {};
-    const profile = {
-      manual: clip(p.manual, LIMITS.manual),
-      oferta: clip(p.oferta, LIMITS.oferta),
-      encuesta: clip(p.encuesta, LIMITS.encuesta),
-      updated_at: new Date().toISOString(),
-    };
-
-    // Se rechaza un perfil vacío: si no, un cliente que abre la pantalla de
-    // identidad y guarda sin pegar nada le pisa el respaldo bueno con vacío.
-    if (!profile.oferta) {
-      return json(400, {
-        error: 'empty_profile',
-        message: 'Como mínimo hace falta la Oferta en Una Página.',
-      });
-    }
+    let cuerpo;
+    try { cuerpo = await req.json(); } catch { return json(400, { error: 'bad_json' }); }
 
     try {
-      await store.setJSON(code, profile);
-      return json(200, { ok: true, updated_at: profile.updated_at });
+      const r = await guardarPerfil(cliente.id, cuerpo);
+      if (!r.ok) {
+        return json(400, {
+          error: r.motivo,
+          message: 'Como mínimo hace falta tu Oferta en Una Página: sin eso Synoma escribe genérico.',
+        });
+      }
+      return json(200, { ok: true, actualizado_en: r.actualizado_en });
     } catch (e) {
-      console.error('[perfil] fallo guardando respaldo:', e?.message ?? e);
-      return json(502, { error: 'write_failed', message: 'No se pudo guardar el respaldo.' });
+      console.error('[perfil] fallo guardando:', e?.message ?? e);
+      return json(503, { error: 'db_error', message: 'No pudimos guardar tu identidad. Probá de nuevo.' });
     }
   }
 
@@ -104,31 +78,13 @@ export const config = { path: '/api/perfil' };
 
 // ---------------------------------------------------------------------------
 
-// Misma normalización que synoma.js: si difieren, el respaldo se guarda con una
-// clave y se busca con otra.
-const normalize = (v) => String(v ?? '')
-  .normalize('NFKC')
-  .replace(/[\u2010-\u2015\u2212]/g, '-')
-  .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')
-  .replace(/-/g, '')
-  .toUpperCase();
-const clip = (v, max) => String(v ?? '').trim().slice(0, max);
-
-function parseCodes(raw) {
-  return String(raw ?? '').split(',').map(normalize).filter(Boolean);
-}
-
-function originAllowed(req) {
+function mismoOrigen(req) {
   const origin = req.headers.get('origin');
   if (!origin) return true;
-  const allowed = String(process.env.SYNOMA_ALLOWED_ORIGINS ?? '')
+  const extras = String(process.env.SYNOMA_ALLOWED_ORIGINS ?? '')
     .split(',').map((o) => o.trim().replace(/\/$/, '')).filter(Boolean);
-  if (allowed.includes(origin)) return true;
-  try {
-    return new URL(origin).host === new URL(req.url).host;
-  } catch {
-    return false;
-  }
+  if (extras.includes(origin)) return true;
+  try { return new URL(origin).host === new URL(req.url).host; } catch { return false; }
 }
 
 function json(status, body) {

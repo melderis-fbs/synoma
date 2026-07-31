@@ -119,6 +119,15 @@
   .vid iframe{display:block;width:100%;aspect-ratio:16/9;border:0}
   .welcome .vid{margin-top:22px;text-align:left}
 
+  .code-row input[type=email]{letter-spacing:normal;text-transform:none;text-align:left;font-weight:600}
+  #codigo-input{letter-spacing:.42em;font-size:22px;font-weight:800}
+  .pasos-pie{display:flex;justify-content:space-between;gap:16px;margin-top:16px}
+  #renovacion{margin-top:18px;background:var(--cream);border:1px solid var(--border);
+    border-radius:14px;padding:22px;text-align:left}
+  #renovacion .renov-titulo{font-weight:800;font-size:15.5px;color:var(--black);margin-bottom:8px}
+  #renovacion p{color:var(--muted);font-size:14px;line-height:1.6;margin-bottom:18px}
+  #renovacion .btn{display:inline-block;text-decoration:none}
+  #setup-msg{color:#B3413A;font-size:13.5px;line-height:1.5;min-height:20px;margin-top:14px}
   .err-note{background:#FFF3F2;border:1px solid #F3D2CF;color:#B3413A;font-size:13.5px;
     padding:11px 14px;border-radius:10px;line-height:1.55}
   .btn:disabled{opacity:.45;cursor:default}
@@ -154,16 +163,36 @@
     <div class="mark">↑</div>
     <span class="kicker">Founders · Business Strategists</span>
     <h1>Tu Motor<br>de Contenido, ⚡</h1>
-    <p class="sub">Entrá con tu código de cliente. Acá adentro está tu asistente entrenado con tu identidad, tu oferta y las palabras de tus clientes.</p>
+    <p class="sub">Entrá con tu email. Acá adentro está tu asistente entrenado con tu identidad, tu oferta y las palabras de tus clientes.</p>
     <div class="code-card">
       <span class="pill">Acceso</span>
-      <label>Tu código Founders</label>
-      <small>Te lo dio tu coach por Telegram. Si no lo tenés, pedíselo.</small>
-      <div class="code-row">
-        <input id="code-input" placeholder="FND-XXXX" maxlength="32" autocomplete="off">
-        <button class="btn" onclick="login()">Entrar →</button>
+
+      <div id="paso-email">
+        <label>Tu email</label>
+        <small>El mismo con el que entraste a Founders. Te mandamos un código de 6 números.</small>
+        <div class="code-row">
+          <input id="email-input" type="email" placeholder="vos@email.com"
+                 autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false">
+          <button class="btn" id="btn-email" onclick="pedirCodigo()">Entrar →</button>
+        </div>
       </div>
+
+      <div id="paso-codigo" hidden>
+        <label>Tu código</label>
+        <small>Te mandamos 6 números a <b id="email-eco"></b>. Está también en el asunto del mail.</small>
+        <div class="code-row">
+          <input id="codigo-input" placeholder="000000" maxlength="6" inputmode="numeric"
+                 autocomplete="one-time-code" autocapitalize="off" spellcheck="false">
+          <button class="btn" id="btn-codigo" onclick="confirmarCodigo()">Confirmar →</button>
+        </div>
+        <div class="pasos-pie">
+          <a class="link-beige" onclick="volverAEmail()">Cambiar el email</a>
+          <a class="link-beige" onclick="pedirCodigo(true)">Reenviar el código</a>
+        </div>
+      </div>
+
       <div class="err" id="login-err"></div>
+      <div id="renovacion" hidden></div>
     </div>
     <div data-video="bienvenida"></div>
     <div class="login-foot">Herramienta exclusiva para clientes Founders</div>
@@ -207,7 +236,8 @@
       <textarea id="f-encuesta" placeholder="Pegá acá las frases exactas de tus clientes…"></textarea>
     </div>
 
-    <button class="btn" onclick="saveSetup()">Guardar y entrar a mi dashboard →</button>
+    <button class="btn" id="btn-guardar" onclick="guardarIdentidad()">Guardar y entrar a mi dashboard →</button>
+    <div id="setup-msg"></div>
   </div>
 </div>
 
@@ -217,8 +247,8 @@
     <div class="word">SYN<span>O</span>MA</div>
     <div class="menu">
       <span class="who" id="who"></span>
-      <button onclick="showSetup()">Mi identidad</button>
-      <button onclick="logout()">Salir</button>
+      <button onclick="abrirIdentidad()">Mi identidad</button>
+      <button onclick="salir()">Salir</button>
     </div>
   </div>
   <div class="dash-body">
@@ -338,14 +368,20 @@ function mountVideo(slot){
 
 function mountVideos(){
   document.querySelectorAll('[data-video]').forEach(host=>{
-    if(host.firstChild) return;              // ya montado
+    if(host.firstChild) return;
     const el = mountVideo(host.dataset.video);
     if(el) host.appendChild(el);
   });
 }
 
+/* =============================================================================
+   Estado
+   ============================================================================= */
+
 const $ = id => document.getElementById(id);
-let CODE = localStorage.getItem('synoma_code') || '';
+
+let EMAIL = '';        // solo durante el login
+let CLIENTE = null;    // { email, nombre } cuando hay sesión
 let HISTORY = [];
 let SENDING = false;
 
@@ -353,77 +389,200 @@ function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   $(view).classList.add('active');
 }
-function profileKey(){ return 'synoma_profile_' + CODE; }
-function getProfile(){ try{ return JSON.parse(localStorage.getItem(profileKey())||'null'); }catch(e){ return null; } }
 
-/* ---------- login / identidad ---------- */
+// Todas las llamadas van con la cookie de sesión. Es mismo origen, así que el
+// navegador la manda solo; same-origin es explícito para que no dependa del
+// default del navegador.
+async function api(url, opciones = {}){
+  const res = await fetch(url, { credentials:'same-origin', ...opciones });
+  let datos = null;
+  try { datos = await res.json(); } catch(e) { /* puede no traer cuerpo */ }
+  return { res, datos };
+}
 
-async function login(){
-  const c = $('code-input').value.trim().toUpperCase();
-  if(c.length < 4){ setLoginMsg('Ingresá el código que te dio tu coach.', 'err'); return; }
-  CODE = c; localStorage.setItem('synoma_code', c);
-  setLoginMsg('');
+/* =============================================================================
+   Login: email → código de 6 dígitos
+   ============================================================================= */
 
-  if(getProfile()){ enterDash(); return; }
+function msgLogin(texto, tipo){
+  const el = $('login-err');
+  el.textContent = texto || '';
+  el.style.color = tipo === 'info' ? 'var(--muted)' : '';
+}
 
-  // Sin perfil local. Antes de pedirle que vuelva a pegar tres documentos,
-  // buscamos el respaldo del servidor (Safari borra el localStorage a los
-  // 7 días sin visitas, así que esto pasa seguido en iPhone).
-  setLoginMsg('Buscando tu identidad guardada…', 'info');
-  const restored = await fetchBackup(c);
-  setLoginMsg('');
-  if(restored){
-    localStorage.setItem(profileKey(), JSON.stringify(restored));
-    enterDash();
-  } else {
-    show('view-setup');
+// Cuando el acceso terminó no se muestra un error: se muestra la oferta de
+// renovar. Es el momento en que la persona más ganas tiene de seguir.
+function mostrarRenovacion(datos){
+  msgLogin('');
+  const caja = $('renovacion');
+  caja.hidden = false;
+  caja.replaceChildren();
+
+  const t = document.createElement('div');
+  t.className = 'renov-titulo';
+  t.textContent = datos.message || 'Tu acceso a Synoma terminó.';
+  caja.appendChild(t);
+
+  const p = document.createElement('p');
+  p.textContent = datos.detalle || 'Podés seguir usándolo renovando tu acceso.';
+  caja.appendChild(p);
+
+  if(datos.renovacion_url){
+    const a = document.createElement('a');
+    a.className = 'btn';
+    a.href = datos.renovacion_url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'Renovar mi acceso →';
+    caja.appendChild(a);
   }
 }
 
-function setLoginMsg(text, kind){
-  const el = $('login-err');
-  el.textContent = text || '';
-  el.style.color = kind === 'info' ? 'var(--muted)' : '';
-}
+async function pedirCodigo(reenvio){
+  const email = $('email-input').value.trim();
+  if(!email || !email.includes('@')){
+    msgLogin('Escribí tu email para que te mandemos el código.');
+    return;
+  }
 
-async function saveSetup(){
-  const p = { manual:$('f-manual').value.trim(), oferta:$('f-oferta').value.trim(), encuesta:$('f-encuesta').value.trim() };
-  if(!p.oferta){ alert('Como mínimo pegá tu Oferta en Una Página — sin eso Synoma escribe genérico.'); return; }
-  localStorage.setItem(profileKey(), JSON.stringify(p));
-  enterDash();
-  saveBackup(p); // en segundo plano: no hace esperar al cliente
-}
+  $('renovacion').hidden = true;
+  $('btn-email').disabled = true;
+  msgLogin(reenvio ? 'Reenviando…' : 'Verificando tu acceso…', 'info');
 
-async function fetchBackup(code){
   try{
-    const res = await fetch('/api/perfil?code=' + encodeURIComponent(code));
-    if(!res.ok) return null;
-    const data = await res.json();
-    const p = data && data.profile;
-    if(!p || !p.oferta) return null;
-    return { manual: p.manual||'', oferta: p.oferta||'', encuesta: p.encuesta||'' };
-  }catch(e){ return null; }
-}
-
-async function saveBackup(p){
-  try{
-    const res = await fetch('/api/perfil', {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ code: CODE, profile: p })
+    const { res, datos } = await api('/api/auth/solicitar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email }),
     });
-    if(!res.ok) console.warn('[synoma] respaldo del perfil no guardado:', res.status);
-  }catch(e){ console.warn('[synoma] respaldo del perfil no guardado:', e); }
+
+    if(res.ok){
+      EMAIL = email;
+      $('email-eco').textContent = email;
+      $('paso-email').hidden = true;
+      $('paso-codigo').hidden = false;
+      $('codigo-input').focus();
+      msgLogin(datos?.modo_desarrollo
+        ? 'Modo desarrollo: el código está en el log de la función, no en tu email.'
+        : '', 'info');
+      return;
+    }
+
+    if(datos?.error === 'acceso_terminado'){ mostrarRenovacion(datos); return; }
+    msgLogin(datos?.message || 'No pudimos enviarte el código. Probá de nuevo.');
+  }catch(e){
+    msgLogin('Sin conexión. Revisá tu internet y probá de nuevo.');
+  }finally{
+    $('btn-email').disabled = false;
+  }
 }
 
-function showSetup(){
-  const p = getProfile()||{};
-  $('f-manual').value = p.manual||''; $('f-oferta').value = p.oferta||''; $('f-encuesta').value = p.encuesta||'';
+async function confirmarCodigo(){
+  const codigo = $('codigo-input').value.replace(/\D/g,'');
+  if(codigo.length !== 6){ msgLogin('El código son 6 números.'); return; }
+
+  $('btn-codigo').disabled = true;
+  msgLogin('Entrando…', 'info');
+
+  try{
+    const { res, datos } = await api('/api/auth/verificar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email: EMAIL, codigo }),
+    });
+
+    if(res.ok){
+      CLIENTE = datos.cliente;
+      msgLogin('');
+      if(datos.perfil_cargado){ entrarDash(); } else { await abrirIdentidad(); }
+      return;
+    }
+
+    if(datos?.error === 'acceso_terminado'){ mostrarRenovacion(datos); return; }
+    msgLogin(datos?.message || 'No pudimos validar el código.');
+    $('codigo-input').select();
+  }catch(e){
+    msgLogin('Sin conexión. Revisá tu internet y probá de nuevo.');
+  }finally{
+    $('btn-codigo').disabled = false;
+  }
+}
+
+function volverAEmail(){
+  $('paso-codigo').hidden = true;
+  $('paso-email').hidden = false;
+  $('codigo-input').value = '';
+  msgLogin('');
+  $('email-input').focus();
+}
+
+async function salir(){
+  try{ await api('/api/auth/sesion', { method:'DELETE' }); }catch(e){}
+  location.reload();
+}
+
+/* =============================================================================
+   Identidad
+   ============================================================================= */
+
+async function abrirIdentidad(){
   show('view-setup');
-}
-function enterDash(){ $('who').textContent = CODE; show('view-dash'); }
-function logout(){ localStorage.removeItem('synoma_code'); CODE=''; HISTORY=[]; location.reload(); }
+  $('setup-msg').textContent = '';
 
-/* ---------- mensajes ---------- */
+  const { res, datos } = await api('/api/perfil');
+  if(res.ok && datos?.perfil){
+    $('f-manual').value   = datos.perfil.manual   || '';
+    $('f-oferta').value   = datos.perfil.oferta   || '';
+    $('f-encuesta').value = datos.perfil.encuesta || '';
+  }
+}
+
+async function guardarIdentidad(){
+  const cuerpo = {
+    manual:   $('f-manual').value.trim(),
+    oferta:   $('f-oferta').value.trim(),
+    encuesta: $('f-encuesta').value.trim(),
+  };
+
+  if(!cuerpo.oferta){
+    $('setup-msg').textContent = '⚠️ Como mínimo pegá tu Oferta en Una Página — sin eso Synoma escribe genérico.';
+    $('f-oferta').focus();
+    return;
+  }
+
+  $('btn-guardar').disabled = true;
+  $('setup-msg').textContent = 'Guardando…';
+
+  try{
+    const { res, datos } = await api('/api/perfil', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(cuerpo),
+    });
+
+    if(res.ok){ $('setup-msg').textContent = ''; entrarDash(); return; }
+    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+    $('setup-msg').textContent = '⚠️ ' + (datos?.message || 'No pudimos guardar. Probá de nuevo.');
+  }catch(e){
+    $('setup-msg').textContent = '⚠️ Sin conexión. Revisá tu internet.';
+  }finally{
+    $('btn-guardar').disabled = false;
+  }
+}
+
+function entrarDash(){
+  $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
+  show('view-dash');
+}
+
+function volverAlLogin(mensaje){
+  CLIENTE = null;
+  HISTORY = [];
+  show('view-login');
+  volverAEmail();
+  if(mensaje) msgLogin(mensaje);
+}
+
+/* =============================================================================
+   Mensajes
+   ============================================================================= */
 
 function renderLite(text){
   return text.replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -467,8 +626,6 @@ function askCmd(cmd, hint){
 }
 function runCmd(cmd){ $('input').value = cmd; send(); }
 
-/* ---------- envío con streaming ---------- */
-
 async function send(){
   if(SENDING) return;                    // evita doble envío con Enter repetido
   const text = $('input').value.trim();
@@ -485,15 +642,20 @@ async function send(){
   let acc = '';      // texto acumulado
 
   try{
+    // Ya no se manda ni el código ni el perfil: el servidor sabe quién es por la
+    // cookie y lee el perfil de la base. Antes, un navegador con el localStorage
+    // limpio mandaba un perfil vacío y Synoma escribía genérico en silencio.
     const res = await fetch('/api/synoma', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ code: CODE, profile: getProfile(), messages: HISTORY.slice(-12) })
+      method:'POST', credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: HISTORY.slice(-12) }),
     });
 
     if(!res.ok){
       const info = await res.json().catch(()=>({}));
       throw { code: info.error || ('http_' + res.status),
-              message: info.message || 'No se pudo contactar al motor.' };
+              message: info.message || 'No se pudo contactar al motor.',
+              datos: info };
     }
 
     // El servidor manda NDJSON: una línea de JSON por evento.
@@ -536,13 +698,24 @@ function handleSendError(err, body, acc){
   const code = (err && err.code) || 'unknown';
   const message = (err && err.message) || 'Ocurrió un error inesperado. Probá de nuevo.';
 
+  // La sesión venció: se vuelve al login en lugar de dejarlo reintentando algo
+  // que nunca va a funcionar.
+  if(code === 'sin_sesion'){ volverAlLogin(message); return; }
+  if(code === 'acceso_terminado'){ show('view-login'); mostrarRenovacion(err.datos || {message}); return; }
+
+  // Falta cargar la identidad: se lo lleva a la pantalla donde se resuelve.
+  if(code === 'sin_perfil'){
+    startMsg('bot','Falta tu identidad').appendChild(errorNote(message));
+    setTimeout(()=>abrirIdentidad(), 1600);
+    return;
+  }
+
   // El modo demo se activa SOLO si el servidor dice explícitamente que el motor
   // no está configurado. Antes CUALQUIER error caía acá — incluido el timeout —
   // y el cliente recibía contenido de ejemplo inventado creyendo que era suyo.
   if(code === 'not_configured'){
     $('demo-pill').style.display='block';
-    const demo = demoReply();
-    addMsg('bot', demo, 'Ejemplo — motor sin conectar');
+    addMsg('bot', demoReply(), 'Ejemplo — motor sin conectar');
     return;                              // no se guarda en HISTORY: no es contenido real
   }
 
@@ -564,22 +737,32 @@ function demoReply(){
   return "⚠️ **Esto no es tu contenido.**\n\nEl motor no está conectado en este momento — falta configurar la API en el servidor. No puedo generar nada con tu voz ni con tu oferta.\n\nAvisale a tu coach. Cuando esté activo, acá te aparece tu plan real, escrito con tus palabras y las de tus clientes.";
 }
 
-/* ---------- arranque ---------- */
+/* =============================================================================
+   Arranque
+   ============================================================================= */
 
 $('input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
-$('code-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ login(); }});
+$('email-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ pedirCodigo(); }});
+$('codigo-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ confirmarCodigo(); }});
+
+// Solo números en el campo del código, y confirma solo al completar los 6.
+$('codigo-input').addEventListener('input', e=>{
+  const limpio = e.target.value.replace(/\D/g,'').slice(0,6);
+  if(e.target.value !== limpio) e.target.value = limpio;
+  if(limpio.length === 6) confirmarCodigo();
+});
 
 (async function boot(){
   mountVideos();
-  if(!CODE) return;
-  if(getProfile()){ enterDash(); return; }
-  const restored = await fetchBackup(CODE);
-  if(restored){
-    localStorage.setItem(profileKey(), JSON.stringify(restored));
-    enterDash();
-  } else {
-    show('view-setup');
-  }
+  try{
+    const { datos } = await api('/api/auth/sesion');
+    if(datos?.sesion){
+      CLIENTE = { email: datos.sesion.email, nombre: datos.sesion.nombre };
+      if(datos.sesion.perfil_cargado){ entrarDash(); } else { await abrirIdentidad(); }
+      return;
+    }
+    if(datos?.motivo === 'acceso_terminado'){ mostrarRenovacion(datos); }
+  }catch(e){ /* sin sesión: queda la pantalla de login */ }
 })();
 </script>
 </body>
