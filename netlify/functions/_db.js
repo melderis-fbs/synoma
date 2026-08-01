@@ -19,11 +19,40 @@ const CANDIDATOS = [
   'NEON_DATABASE_URL',
 ];
 
+const ES_URL_POSTGRES = /^postgres(ql)?:\/\/\S+$/i;
+
+let yaAvisado = false;
+
 export function urlDeBase() {
+  // 1. Los nombres conocidos, en orden fijo: si hay más de uno, siempre gana el
+  //    mismo y el comportamiento no cambia entre deploys.
   for (const variable of CANDIDATOS) {
     const url = process.env[variable];
-    if (url && url.trim()) return { url: url.trim(), variable };
+    if (url && ES_URL_POSTGRES.test(url.trim())) return { url: url.trim(), variable };
   }
+
+  // 2. Si ninguno está, se busca por CONTENIDO: cualquier variable cuyo valor
+  //    sea una URL de Postgres. Adivinar nombres ya falló una vez; el valor no
+  //    depende de cómo lo haya llamado la plataforma.
+  for (const [variable, valor] of Object.entries(process.env)) {
+    if (typeof valor === 'string' && ES_URL_POSTGRES.test(valor.trim())) {
+      console.warn(`[db] URL encontrada en ${variable} (no estaba entre los nombres previstos)`);
+      return { url: valor.trim(), variable };
+    }
+  }
+
+  // 3. No hay nada. Se listan los NOMBRES de las variables que se le parecen
+  //    —nunca los valores— para poder ver de un vistazo qué hay realmente.
+  if (!yaAvisado) {
+    yaAvisado = true;
+    const parecidas = Object.keys(process.env)
+      .filter((k) => /DATABASE|POSTGRES|NEON|^PG/i.test(k))
+      .sort();
+    console.error('[db] no se encontró ninguna URL de Postgres en el entorno.');
+    console.error(`[db]   nombres buscados: ${CANDIDATOS.join(', ')}`);
+    console.error(`[db]   variables presentes que se le parecen: ${parecidas.join(', ') || '(ninguna)'}`);
+  }
+
   return null;
 }
 

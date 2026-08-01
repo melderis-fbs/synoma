@@ -33,10 +33,21 @@ const CANDIDATOS = [
   'NEON_DATABASE_URL',
 ];
 
+const ES_URL_POSTGRES = /^postgres(ql)?:\/\/\S+$/i;
+
 function urlDeBase() {
   for (const variable of CANDIDATOS) {
     const url = process.env[variable];
-    if (url && url.trim()) return { url: url.trim(), variable };
+    if (url && ES_URL_POSTGRES.test(url.trim())) return { url: url.trim(), variable };
+  }
+
+  // Igual que en las funciones: si el nombre no es ninguno de los previstos, se
+  // busca por contenido. El valor no depende de cómo lo llame la plataforma.
+  for (const [variable, valor] of Object.entries(process.env)) {
+    if (typeof valor === 'string' && ES_URL_POSTGRES.test(valor.trim())) {
+      console.warn(`[migrar] URL encontrada en ${variable} (nombre no previsto)`);
+      return { url: valor.trim(), variable };
+    }
   }
   return null;
 }
@@ -47,6 +58,9 @@ async function main() {
   if (!encontrada) {
     console.warn('[migrar] ── No hay base de datos configurada; se omiten las migraciones.');
     console.warn(`[migrar]    Se buscó en: ${CANDIDATOS.join(', ')}`);
+    const parecidas = Object.keys(process.env)
+      .filter((k) => /DATABASE|POSTGRES|NEON|^PG/i.test(k)).sort();
+    console.warn(`[migrar]    Variables presentes que se le parecen: ${parecidas.join(', ') || '(ninguna)'}`);
     console.warn('[migrar]    El sitio se publica igual, pero el login no va a funcionar');
     console.warn('[migrar]    hasta que exista la base. Netlify → Database.');
     return;
