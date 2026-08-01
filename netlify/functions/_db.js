@@ -79,6 +79,27 @@ export function getSql() {
   return _sql;
 }
 
+// Postgres 42P01 = la tabla no existe.
+//
+// Se distingue a propósito de cualquier otro fallo de base: significa que la
+// conexión anda pero las migraciones no corrieron, y el arreglo es completamente
+// distinto (correr las migraciones, no revisar credenciales ni red). Sin esta
+// distinción el síntoma es idéntico al de una base caída.
+export function faltanTablas(e) {
+  return e?.code === '42P01' || /relation .* does not exist/i.test(e?.message ?? '');
+}
+
+export function avisarSiFaltanTablas(e, origen) {
+  if (!faltanTablas(e)) return false;
+  console.error('');
+  console.error(`[db] ✗ ${origen}: la base responde pero NO tiene las tablas.`);
+  console.error('[db]   Las migraciones corren en el build, y el build no ve la base.');
+  console.error('[db]   Arreglo: copiar el connection string de Netlify → Database y');
+  console.error('[db]   cargarlo como DATABASE_URL en Environment variables, después redeploy.');
+  console.error('');
+  return true;
+}
+
 // Para chequeos de salud y para que el panel de admin pueda distinguir
 // "no hay datos" de "la base no responde".
 export async function baseDisponible() {

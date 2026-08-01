@@ -7,7 +7,7 @@
 //                    WhatsApp, formulario). Si está vacío se muestra el mensaje
 //                    sin enlace.
 
-import { getSql, normalizarEmail, emailPlausible, urlDeBase } from './_db.js';
+import { normalizarEmail, emailPlausible, urlDeBase, avisarSiFaltanTablas } from './_db.js';
 import { buscarContacto, ghlConfigurado } from './_ghl.js';
 import { enviarCodigo } from './_email.js';
 import {
@@ -45,6 +45,12 @@ export default async (req) => {
       });
     }
   } catch (e) {
+    if (avisarSiFaltanTablas(e, 'auth-solicitar')) {
+      return json(503, {
+        error: 'sin_tablas',
+        message: 'El acceso está a medio configurar. Avisale a tu coach.',
+      });
+    }
     console.error('[solicitar] fallo consultando la base:', e?.message ?? e);
     return json(503, { error: 'db_error', message: 'No podemos verificar tu acceso en este momento.' });
   }

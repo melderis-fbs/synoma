@@ -4,7 +4,7 @@
 // El front lo llama al abrir la página para decidir qué pantalla mostrar: login,
 // carga de identidad, o dashboard.
 
-import { urlDeBase } from './_db.js';
+import { urlDeBase, avisarSiFaltanTablas } from './_db.js';
 import { clienteDeSesion, cerrarSesion, cookieBorrada } from './_auth.js';
 import { leerPerfil } from './_perfil.js';
 
@@ -38,6 +38,10 @@ export default async (req) => {
   try {
     cliente = await clienteDeSesion(req);
   } catch (e) {
+    // Si faltan las tablas, se responde "no hay sesión" en lugar de un error:
+    // el cliente ve la pantalla de login normal, y el problema queda en el log
+    // donde corresponde en vez de en su cara.
+    if (avisarSiFaltanTablas(e, 'auth-sesion')) return json(200, { sesion: null });
     console.error('[sesion] fallo leyendo la sesión:', e?.message ?? e);
     return json(503, { error: 'db_error' });
   }
