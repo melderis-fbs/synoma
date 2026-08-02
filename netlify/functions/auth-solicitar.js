@@ -125,8 +125,13 @@ export default async (req) => {
     ok: true,
     nombre: cliente?.nombre ?? null,
     minutos: LIMITES.MINUTOS_CODIGO,
-    // Solo aparece mientras no haya email configurado, para poder probar.
+
+    // El código se devuelve al navegador SOLO cuando no hay RESEND_API_KEY, o
+    // sea cuando es imposible que llegue un email. En cuanto se configure el
+    // envío, esta rama deja de ejecutarse y el código nunca más sale del
+    // servidor: el agujero se cierra solo, no depende de acordarse de sacarlo.
     modo_desarrollo: envio.modo === 'log' || undefined,
+    codigo_desarrollo: envio.modo === 'log' ? codigo : undefined,
   });
 };
 

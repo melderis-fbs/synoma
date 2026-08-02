@@ -122,6 +122,13 @@
   .code-row input[type=email]{letter-spacing:normal;text-transform:none;text-align:left;font-weight:600}
   #codigo-input{letter-spacing:.42em;font-size:22px;font-weight:800}
   .pasos-pie{display:flex;justify-content:space-between;gap:16px;margin-top:16px}
+  #dev-codigo{margin-top:16px;background:#FFF7E8;border:1px solid #EAD9B0;border-radius:12px;
+    padding:16px 18px;text-align:left}
+  #dev-codigo .dev-kicker{font-size:10px;letter-spacing:.2em;text-transform:uppercase;
+    color:#A8946F;font-weight:800;margin-bottom:8px}
+  #dev-codigo .dev-num{font-size:30px;font-weight:800;letter-spacing:.18em;color:var(--black);
+    font-variant-numeric:tabular-nums}
+  #dev-codigo .dev-pie{color:#8a7a5c;font-size:12px;line-height:1.5;margin-top:8px}
   #renovacion{margin-top:18px;background:var(--cream);border:1px solid var(--border);
     border-radius:14px;padding:22px;text-align:left}
   #renovacion .renov-titulo{font-weight:800;font-size:15.5px;color:var(--black);margin-bottom:8px}
@@ -192,6 +199,7 @@
       </div>
 
       <div class="err" id="login-err"></div>
+      <div id="dev-codigo" hidden></div>
       <div id="renovacion" hidden></div>
     </div>
     <div data-video="bienvenida"></div>
@@ -461,9 +469,8 @@ async function pedirCodigo(reenvio){
       $('paso-email').hidden = true;
       $('paso-codigo').hidden = false;
       $('codigo-input').focus();
-      msgLogin(datos?.modo_desarrollo
-        ? 'Modo desarrollo: el código está en el log de la función, no en tu email.'
-        : '', 'info');
+      msgLogin('');
+      if(datos?.codigo_desarrollo){ mostrarCodigoDeDesarrollo(datos.codigo_desarrollo); }
       return;
     }
 
@@ -474,6 +481,27 @@ async function pedirCodigo(reenvio){
   }finally{
     $('btn-email').disabled = false;
   }
+}
+
+// Solo aparece cuando el servidor no puede mandar emails (sin RESEND_API_KEY).
+// Evita tener que ir a buscar el código al log durante la puesta a punto.
+function mostrarCodigoDeDesarrollo(codigo){
+  const caja = $('dev-codigo');
+  caja.hidden = false;
+  caja.replaceChildren();
+
+  const k = document.createElement('div');
+  k.className = 'dev-kicker';
+  k.textContent = 'Modo desarrollo · el email no está configurado';
+  const n = document.createElement('div');
+  n.className = 'dev-num';
+  n.textContent = codigo;
+  const p = document.createElement('div');
+  p.className = 'dev-pie';
+  p.textContent = 'Ya lo cargamos abajo. Cuando conectes Resend, el código deja de mostrarse acá y llega por mail.';
+
+  caja.append(k, n, p);
+  $('codigo-input').value = codigo;
 }
 
 async function confirmarCodigo(){
@@ -507,6 +535,7 @@ async function confirmarCodigo(){
 }
 
 function volverAEmail(){
+  $('dev-codigo').hidden = true;
   $('paso-codigo').hidden = true;
   $('paso-email').hidden = false;
   $('codigo-input').value = '';
