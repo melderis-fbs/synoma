@@ -7,6 +7,7 @@
 import { urlDeBase, avisarSiFaltanTablas } from './_db.js';
 import { clienteDeSesion, cerrarSesion, cookieBorrada } from './_auth.js';
 import { leerPerfil } from './_perfil.js';
+import { configPublica } from './_config.js';
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
@@ -14,7 +15,7 @@ export default async (req) => {
 
   // Sin base de datos no hay sesión posible, pero esto no es un error del
   // cliente: se responde "no hay sesión" y el front muestra el login.
-  if (!urlDeBase()) return json(200, { sesion: null, motivo: 'not_configured' });
+  if (!urlDeBase()) return json(200, { sesion: null, motivo: 'not_configured', config: configPublica() });
 
   if (req.method === 'DELETE') {
     try { await cerrarSesion(req); } catch (e) {
@@ -41,12 +42,12 @@ export default async (req) => {
     // Si faltan las tablas, se responde "no hay sesión" en lugar de un error:
     // el cliente ve la pantalla de login normal, y el problema queda en el log
     // donde corresponde en vez de en su cara.
-    if (avisarSiFaltanTablas(e, 'auth-sesion')) return json(200, { sesion: null });
+    if (avisarSiFaltanTablas(e, 'auth-sesion')) return json(200, { sesion: null, config: configPublica() });
     console.error('[sesion] fallo leyendo la sesión:', e?.message ?? e);
     return json(503, { error: 'db_error' });
   }
 
-  if (!cliente) return json(200, { sesion: null });
+  if (!cliente) return json(200, { sesion: null, config: configPublica() });
 
   if (cliente.suspendido) {
     return json(200, {
@@ -54,7 +55,7 @@ export default async (req) => {
       motivo: 'acceso_terminado',
       message: 'Tu acceso a Synoma terminó junto con el programa.',
       detalle: 'Podés seguir usándolo renovando tu acceso.',
-      renovacion_url: process.env.RENOVACION_URL || null,
+      config: configPublica(),
     });
   }
 
@@ -68,6 +69,7 @@ export default async (req) => {
   }
 
   return json(200, {
+    config: configPublica(),
     sesion: {
       email: cliente.email,
       nombre: cliente.nombre,

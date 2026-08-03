@@ -122,6 +122,13 @@
   .code-row input[type=email]{letter-spacing:normal;text-transform:none;text-align:left;font-weight:600}
   #codigo-input{letter-spacing:.42em;font-size:22px;font-weight:800}
   .pasos-pie{display:flex;justify-content:space-between;gap:16px;margin-top:16px}
+  .ancla{margin-top:22px;text-align:center;color:var(--muted);font-size:12.5px;line-height:1.7}
+  .ancla b{color:var(--black);font-weight:700}
+  .ancla s{color:var(--soft);text-decoration-thickness:1.5px}
+  .welcome .ancla{margin-top:20px;font-size:12px}
+  #renovacion .precio{display:flex;align-items:baseline;gap:9px;margin:4px 0 14px}
+  #renovacion .precio .n{font-size:32px;font-weight:800;color:var(--black);letter-spacing:-.02em}
+  #renovacion .precio .u{font-size:13px;color:var(--muted);font-weight:600}
   #dev-codigo{margin-top:16px;background:#FFF7E8;border:1px solid #EAD9B0;border-radius:12px;
     padding:16px 18px;text-align:left}
   #dev-codigo .dev-kicker{font-size:10px;letter-spacing:.2em;text-transform:uppercase;
@@ -203,6 +210,7 @@
       <div id="renovacion" hidden></div>
     </div>
     <div data-video="bienvenida"></div>
+    <div class="ancla" id="ancla-login"></div>
     <div class="login-foot">Herramienta exclusiva para clientes Founders</div>
   </div>
 </div>
@@ -284,6 +292,7 @@
           <h2>Hola, soy Synoma 👋</h2>
           <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando del menú o escribime abajo. Empezá por <b>📅 Mi semana</b> — en 2 minutos tenés tu plan.</p>
           <div data-video="comandos"></div>
+          <div class="ancla" id="ancla-dash"></div>
         </div>
       </div>
       <div class="typing" id="typing">Synoma está escribiendo…</div>
@@ -390,6 +399,7 @@ const $ = id => document.getElementById(id);
 
 let EMAIL = '';        // solo durante el login
 let CLIENTE = null;    // { email, nombre } cuando hay sesión
+let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let HISTORY = [];
 let SENDING = false;
 
@@ -406,6 +416,22 @@ async function api(url, opciones = {}){
   let datos = null;
   try { datos = await res.json(); } catch(e) { /* puede no traer cuerpo */ }
   return { res, datos };
+}
+
+/* =============================================================================
+   Ancla de valor
+   ============================================================================= */
+
+// Se le muestra al cliente lo que vale Synoma mientras lo tiene incluido, con el
+// precio tachado. No es decoración: si nunca ve que la herramienta cuesta algo,
+// el día que termine el programa va a leer el cobro como un precio nuevo en
+// lugar de como la continuidad de algo que ya venía usando gratis.
+function pintarAnclas(){
+  const texto = `Incluido en tu programa Founders · <s>${CONFIG.moneda} ${CONFIG.precio}/mes</s>`;
+  for (const id of ['ancla-login', 'ancla-dash']){
+    const el = $(id);
+    if(el) el.innerHTML = texto;
+  }
 }
 
 /* =============================================================================
@@ -431,17 +457,30 @@ function mostrarRenovacion(datos){
   t.textContent = datos.message || 'Tu acceso a Synoma terminó.';
   caja.appendChild(t);
 
+  const cfg = datos.config || CONFIG;
+
+  const precio = document.createElement('div');
+  precio.className = 'precio';
+  const n = document.createElement('span');
+  n.className = 'n';
+  n.textContent = `${cfg.moneda} ${cfg.precio}`;
+  const u = document.createElement('span');
+  u.className = 'u';
+  u.textContent = 'por mes';
+  precio.append(n, u);
+  caja.appendChild(precio);
+
   const p = document.createElement('p');
-  p.textContent = datos.detalle || 'Podés seguir usándolo renovando tu acceso.';
+  p.textContent = datos.detalle || 'Podés seguir usándolo con una suscripción.';
   caja.appendChild(p);
 
-  if(datos.renovacion_url){
+  if(cfg.renovacion_url){
     const a = document.createElement('a');
     a.className = 'btn';
-    a.href = datos.renovacion_url;
+    a.href = cfg.renovacion_url;
     a.target = '_blank';
     a.rel = 'noopener';
-    a.textContent = 'Renovar mi acceso →';
+    a.textContent = 'Activar mi suscripción →';
     caja.appendChild(a);
   }
 }
@@ -783,8 +822,10 @@ $('codigo-input').addEventListener('input', e=>{
 
 (async function boot(){
   mountVideos();
+  pintarAnclas();
   try{
     const { datos } = await api('/api/auth/sesion');
+    if(datos?.config){ CONFIG = datos.config; pintarAnclas(); }
     if(datos?.sesion){
       CLIENTE = { email: datos.sesion.email, nombre: datos.sesion.nombre };
       if(datos.sesion.perfil_cargado){ entrarDash(); } else { await abrirIdentidad(); }

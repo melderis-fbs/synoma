@@ -11,6 +11,8 @@
 // Es un modo de desarrollo y avisa fuerte en el log. Con clientes reales
 // RESEND_API_KEY tiene que estar cargada.
 
+import { LIMITES } from './_auth.js';
+
 const API = 'https://api.resend.com/emails';
 
 export function emailConfigurado() {
@@ -77,7 +79,7 @@ function plantilla(codigo) {
           <div style="font-size:42px;font-weight:800;letter-spacing:.16em;color:#111;margin:18px 0 6px;font-variant-numeric:tabular-nums">${codigo}</div>
           <p style="color:#7A7A7A;font-size:14px;line-height:1.6;margin:14px 0 0">
             Vence en 10 minutos y sirve una sola vez. Después de usarlo quedás
-            dentro por 60 días sin volver a pedir código.
+            dentro por ${LIMITES.DIAS_SESION} días sin volver a pedir código.
           </p>
           <p style="color:#9A9A9A;font-size:12.5px;line-height:1.6;margin:20px 0 0">
             Si no pediste este código, ignorá este mail: sin él nadie puede entrar

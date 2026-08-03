@@ -13,6 +13,7 @@ import { enviarCodigo } from './_email.js';
 import {
   generarCodigo, guardarCodigo, pedidosRecientes, superoPedidos, upsertCliente, LIMITES,
 } from './_auth.js';
+import { configPublica } from './_config.js';
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
@@ -77,8 +78,8 @@ export default async (req) => {
     return json(403, {
       error: 'acceso_terminado',
       message: 'Tu acceso a Synoma terminó junto con el programa.',
-      detalle: 'Podés seguir usándolo renovando tu acceso.',
-      renovacion_url: process.env.RENOVACION_URL || null,
+      detalle: 'Podés seguir usándolo con una suscripción.',
+      config: configPublica(),
     });
   }
 

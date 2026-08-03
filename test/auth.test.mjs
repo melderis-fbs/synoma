@@ -197,3 +197,58 @@ test('la validación de email descarta basura pero acepta direcciones raras vál
     assert.ok(!emailPlausible(malo), `debería rechazar: ${JSON.stringify(malo)}`);
   }
 });
+
+// --- el email de verdad -----------------------------------------------------
+// La plantilla HTML solo se arma cuando RESEND_API_KEY está cargada, así que un
+// error ahí no aparece en desarrollo: aparecería el día que se conecta el envío,
+// con clientes esperando. Este test recorre esa rama.
+
+test('la plantilla del email se arma sin romperse', async () => {
+  const { enviarCodigo } = await import('../netlify/functions/_email.js');
+  const previa = process.env.RESEND_API_KEY;
+  process.env.RESEND_API_KEY = 'clave-de-prueba';
+
+  let enviado = null;
+  const fetchPrevio = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    enviado = JSON.parse(init.body);
+    return new Response('{}', { status: 200 });
+  };
+
+  try {
+    const r = await enviarCodigo('ana@ejemplo.com', '483920');
+    assert.equal(r.ok, true);
+    assert.equal(r.modo, 'enviado');
+
+    // El código va en el asunto para poder leerlo desde la notificación del
+    // teléfono sin abrir el mail.
+    assert.match(enviado.subject, /483920/);
+    assert.match(enviado.html, /483920/);
+    assert.match(enviado.text, /483920/);
+    assert.equal(enviado.to[0], 'ana@ejemplo.com');
+
+    // Que no haya quedado ningún ${...} sin resolver ni un "undefined" impreso.
+    assert.ok(!enviado.html.includes('undefined'), 'hay una variable sin definir en la plantilla');
+    assert.ok(!/\$\{/.test(enviado.html), 'quedó una interpolación sin resolver');
+    assert.match(enviado.html, new RegExp(`${LIMITES.DIAS_SESION} días`));
+  } finally {
+    globalThis.fetch = fetchPrevio;
+    if (previa === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = previa;
+  }
+});
+
+test('si Resend rechaza el envío se informa, no se finge que salió', async () => {
+  const { enviarCodigo } = await import('../netlify/functions/_email.js');
+  process.env.RESEND_API_KEY = 'clave-de-prueba';
+  const fetchPrevio = globalThis.fetch;
+  globalThis.fetch = async () => new Response('dominio no verificado', { status: 403 });
+  try {
+    const r = await enviarCodigo('ana@ejemplo.com', '111111');
+    assert.equal(r.ok, false);
+    assert.equal(r.motivo, 'http_403');
+  } finally {
+    globalThis.fetch = fetchPrevio;
+    delete process.env.RESEND_API_KEY;
+  }
+});

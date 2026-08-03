@@ -21,7 +21,11 @@ import { getSql, normalizarEmail } from './_db.js';
 
 export const COOKIE = 'synoma_sesion';
 
-const DIAS_SESION = 60;
+// 120 días. La sesión larga es deliberada: el login es fricción, y este es un
+// producto que se usa a rachas —una semana intensa, dos sin entrar—. Con 60 días
+// un cliente que vuelve después de un mes y medio se encuentra con que tiene que
+// pedir un código otra vez, justo cuando volvía.
+const DIAS_SESION = 120;
 const MINUTOS_CODIGO = 10;
 const MAX_INTENTOS = 5;
 

@@ -15,6 +15,7 @@
 import { urlDeBase } from './_db.js';
 import { clienteDeSesion } from './_auth.js';
 import { leerPerfil, guardarPerfil, LIMITES_PERFIL } from './_perfil.js';
+import { configPublica } from './_config.js';
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
@@ -36,7 +37,7 @@ export default async (req) => {
     return json(403, {
       error: 'acceso_terminado',
       message: 'Tu acceso a Synoma terminó junto con el programa.',
-      renovacion_url: process.env.RENOVACION_URL || null,
+      config: configPublica(),
     });
   }
 

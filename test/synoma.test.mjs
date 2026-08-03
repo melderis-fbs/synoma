@@ -104,6 +104,8 @@ async function loadHandler(env = {}, db = fakeDb()) {
   process.env.SYNOMA_DAILY_LIMIT = env.SYNOMA_DAILY_LIMIT ?? '';
   process.env.SYNOMA_ALLOWED_ORIGINS = env.SYNOMA_ALLOWED_ORIGINS ?? '';
   process.env.RENOVACION_URL = env.RENOVACION_URL ?? '';
+  process.env.PRECIO_MENSUAL = env.PRECIO_MENSUAL ?? '';
+  process.env.MONEDA = env.MONEDA ?? '';
   usarSqlDePrueba(db);
   const mod = await import('../netlify/functions/synoma.js?t=' + Math.random());
   return mod.default;
@@ -153,7 +155,11 @@ test('a quien le sacaron el acceso se le ofrece renovar, no un error', async () 
   assert.equal(res.status, 403);
   const body = await res.json();
   assert.equal(body.error, 'acceso_terminado');
-  assert.equal(body.renovacion_url, 'https://pago.ejemplo.com');
+  // El precio viaja con la oferta: el cliente tiene que ver cuánto cuesta
+  // seguir, no solo que se le terminó.
+  assert.equal(body.config.renovacion_url, 'https://pago.ejemplo.com');
+  assert.equal(body.config.precio, '59');
+  assert.equal(body.config.moneda, 'USD');
 });
 
 test('la sesión suspendida no llega a gastar tokens', async () => {

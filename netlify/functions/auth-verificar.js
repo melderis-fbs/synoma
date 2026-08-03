@@ -1,9 +1,10 @@
 // POST /api/auth/verificar   body: { email, codigo }
 //
-// Paso 2 del login: se valida el código y se entrega la sesión de 60 días.
+// Paso 2 del login: se valida el código y se entrega la sesión (ver DIAS_SESION).
 
 import { getSql, normalizarEmail, urlDeBase } from './_db.js';
 import { verificarCodigo, crearSesion, cookieDeSesion, LIMITES } from './_auth.js';
+import { configPublica } from './_config.js';
 
 export default async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
@@ -67,8 +68,8 @@ export default async (req) => {
     return json(403, {
       error: 'acceso_terminado',
       message: 'Tu acceso a Synoma terminó junto con el programa.',
-      detalle: 'Podés seguir usándolo renovando tu acceso.',
-      renovacion_url: process.env.RENOVACION_URL || null,
+      detalle: 'Podés seguir usándolo con una suscripción.',
+      config: configPublica(),
     });
   }
 

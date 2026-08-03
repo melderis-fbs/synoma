@@ -21,6 +21,7 @@
 import { SYSTEM_BASE } from './_prompt.js';
 import { clienteDeSesion } from './_auth.js';
 import { urlDeBase } from './_db.js';
+import { configPublica } from './_config.js';
 import { leerPerfil, bloqueDePerfil, mensajesDeHoy, registrarUso } from './_perfil.js';
 
 const MODEL = 'claude-sonnet-5';
@@ -64,8 +65,8 @@ export default async (req) => {
   if (cliente.suspendido) {
     return fail(403, 'acceso_terminado',
       'Tu acceso a Synoma terminó junto con el programa.', cors,
-      { detalle: 'Podés seguir usándolo renovando tu acceso.',
-        renovacion_url: process.env.RENOVACION_URL || null });
+      { detalle: 'Podés seguir usándolo con una suscripción.',
+        config: configPublica() });
   }
 
   // --- Payload -------------------------------------------------------------
