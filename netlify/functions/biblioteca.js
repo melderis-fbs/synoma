@@ -18,8 +18,9 @@ import {
   listarPiezas, guardarPieza, cambiarEstado, borrarPieza, ESTADOS, ETIQUETAS,
 } from './_biblioteca.js';
 import { configPublica } from './_config.js';
+import { blindar } from './_http.js';
 
-export default async (req) => {
+export default blindar('biblioteca', async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
   if (!urlDeBase()) return json(503, { error: 'not_configured' });
@@ -118,7 +119,7 @@ export default async (req) => {
   }
 
   return json(405, { error: 'method_not_allowed', message: 'Usá GET, POST, PATCH o DELETE.' });
-};
+});
 
 export const config = { path: '/api/biblioteca' };
 

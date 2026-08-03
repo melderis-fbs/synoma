@@ -5,8 +5,9 @@
 import { getSql, normalizarEmail, urlDeBase } from './_db.js';
 import { verificarCodigo, crearSesion, cookieDeSesion, LIMITES } from './_auth.js';
 import { configPublica } from './_config.js';
+import { blindar } from './_http.js';
 
-export default async (req) => {
+export default blindar('verificar', async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' });
   if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
@@ -111,7 +112,7 @@ export default async (req) => {
       'Set-Cookie': cookieDeSesion(token),
     },
   });
-};
+});
 
 export const config = { path: '/api/auth/verificar' };
 

@@ -146,6 +146,8 @@ async function loadHandler(env = {}, db = fakeDb()) {
   process.env.RENOVACION_URL = env.RENOVACION_URL ?? '';
   process.env.PRECIO_MENSUAL = env.PRECIO_MENSUAL ?? '';
   process.env.MONEDA = env.MONEDA ?? '';
+  process.env.SYNOMA_MAX_TOKENS = env.SYNOMA_MAX_TOKENS ?? '';
+  process.env.SYNOMA_MS_REINTENTO = env.SYNOMA_MS_REINTENTO ?? '';
   usarSqlDePrueba(db);
   const mod = await import('../netlify/functions/synoma.js?t=' + Math.random());
   return mod.default;
@@ -411,6 +413,36 @@ test('si la segunda también viene vacía, se avisa con un mensaje útil', async
   assert.equal(events.at(-1).error, 'empty_response');
   // El mensaje tiene que decirle que no es culpa suya y qué hacer.
   assert.match(events.at(-1).message, /volvé a mandar/i);
+});
+
+test('no se reintenta si ya no queda tiempo antes del tope de Netlify', async () => {
+  // Este es el arreglo de un error propio: la primera versión del reintento no
+  // miraba el reloj. Si el primer intento se comía 12 s y volvía vacío, el segundo
+  // empujaba el total por encima del tope de Netlify, la plataforma mataba la
+  // función, y el navegador recibía un 502 que ni siquiera es JSON. El arreglo
+  // pensado para que el cliente no viera un error le causaba uno peor.
+  let n = 0;
+  globalThis.fetch = async () => {
+    n++;
+    // El primer intento tarda más que el presupuesto de reintento.
+    if (n === 1) await new Promise((r) => setTimeout(r, 60));
+    return new Response(sseBody([]), { status: 200 });
+  };
+  const handler = await loadHandler({ SYNOMA_MS_REINTENTO: '30' });
+  const events = await readNdjson(await handler(post(VALID)));
+
+  assert.equal(n, 1, 'sin presupuesto de tiempo no se reintenta');
+  assert.equal(events.at(-1).error, 'empty_response');
+});
+
+test('el tope de tokens se puede bajar desde Netlify sin tocar código', async () => {
+  // Si /semana sigue cortándose, SYNOMA_MAX_TOKENS=1600 y listo, sin esperar un
+  // deploy.
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler({ SYNOMA_MAX_TOKENS: '1600' });
+  await handler(post(VALID));
+  assert.equal(spy.calls[0].payload.max_tokens, 1600);
 });
 
 test('el reintento no se dispara si ya salió texto', async () => {

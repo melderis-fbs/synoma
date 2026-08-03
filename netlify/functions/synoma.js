@@ -41,11 +41,52 @@ const MODEL = 'claude-sonnet-5';
 // tokens. Por eso el tope está donde está: subirlo no arregla nada, solo cambia
 // "se cortó por largo" (recuperable, se puede continuar) por "se cortó la
 // conexión" (se pierde el resto).
-const MAX_TOKENS = 2200;
+// Se puede bajar desde Netlify sin tocar código: si /semana sigue cortándose,
+// SYNOMA_MAX_TOKENS=1600 y listo, sin esperar un deploy.
+const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 2200;
+
+// Hasta cuándo se puede reintentar una respuesta vacía.
+//
+// Esto es la lección de un error propio: la primera versión del reintento no
+// miraba el reloj. Si el primer intento se comía 12 segundos y volvía vacío, el
+// segundo empujaba el total por encima del tope de Netlify, la plataforma mataba
+// la función y el navegador recibía un 502 que ni siquiera es JSON. O sea que un
+// arreglo pensado para que el cliente no viera un error terminaba causándole uno
+// peor y menos diagnosticable.
+//
+// Pasados estos milisegundos ya no hay presupuesto para otra llamada completa:
+// se le informa el problema, que es recuperable, en lugar de arriesgar el 502.
+const MS_PARA_REINTENTAR = Number(process.env.SYNOMA_MS_REINTENTO) || 7000;
+
 const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
 
+// Envoltorio de último recurso.
+//
+// Si algo tira una excepción que no previmos, Netlify devuelve su propia página
+// de error, que NO es JSON. El navegador entonces no puede leer ni el código ni
+// el mensaje, y le muestra al cliente "No se pudo contactar al motor" — que es
+// exactamente lo mismo que ve si se le cortó el wifi. Un error así es imposible
+// de diagnosticar: no queda nada, ni para el cliente ni para nosotros.
+//
+// Con esto, cualquier falla inesperada sale como JSON con su código y queda en el
+// log con el stack completo.
 export default async (req) => {
+  try {
+    return await manejar(req);
+  } catch (e) {
+    console.error('[synoma] EXCEPCIÓN NO PREVISTA:', e?.stack ?? e?.message ?? e);
+    return fail(500, 'error_interno',
+      'Algo se rompió de nuestro lado. Ya quedó registrado — probá de nuevo en un minuto.',
+      corsFor(req));
+  }
+};
+
+const manejar = async (req) => {
+  // El reloj arranca acá y no cuando empieza el stream. Lo que Netlify corta es
+  // la invocación COMPLETA, así que el tiempo de la primera llamada a Anthropic
+  // —que incluye la espera hasta el primer token— también cuenta.
+  const inicioPedido = Date.now();
   const cors = corsFor(req);
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
@@ -187,7 +228,7 @@ export default async (req) => {
     apiKey: process.env.ANTHROPIC_API_KEY, system, messages: trimmed,
   });
 
-  return new Response(toNdjson(upstream.body, cliente, pregunta, reintentar), {
+  return new Response(toNdjson(upstream.body, cliente, pregunta, reintentar, inicioPedido), {
     status: 200,
     headers: {
       ...cors,
@@ -251,12 +292,23 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
 //   {"type":"text","text":"..."}                    fragmento de texto
 //   {"type":"done","usage":{...}}                   terminó bien
 //   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
-function toNdjson(body, cliente, pregunta, reintentar = null) {
+function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Date.now()) {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
     async start(controller) {
       const emit = (obj) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
+
+      // Cerrar dos veces tira TypeError. Pasaba en la rama de error del stream:
+      // se cerraba ahí y el `finally` volvía a cerrar, la excepción escapaba del
+      // start() del ReadableStream y la respuesta HTTP se rompía entera. El
+      // cliente veía "no se pudo contactar al motor" en lugar del error real.
+      let cerrado = false;
+      const cerrar = () => {
+        if (cerrado) return;
+        cerrado = true;
+        try { controller.close(); } catch { /* ya estaba cerrado del otro lado */ }
+      };
       let usage = null;
       let emittedText = false;
       let respuesta = '';
@@ -265,7 +317,7 @@ function toNdjson(body, cliente, pregunta, reintentar = null) {
       // no hay forma de distinguir "el modelo no escribió nada" de "el stream vino
       // con una forma que no sabemos leer".
       let tipos = new Set();
-      const arranque = Date.now();
+      const arranque = inicioPedido;
 
       // Guardar el turno pasa DESPUÉS de cerrar el stream y sin await: el
       // cliente ya tiene su respuesta completa en pantalla, y una base lenta no
@@ -332,10 +384,13 @@ function toNdjson(body, cliente, pregunta, reintentar = null) {
         // dos cosas. Una completación vacía es un hipo transitorio de la API, y
         // hacer que el cliente vuelva a escribir su pedido por eso es hacerle
         // pagar a él un problema que no es suyo.
-        if (resultado === 'fin' && !emittedText && reintentar) {
+        const gastado = () => Date.now() - arranque;
+
+        if (resultado === 'fin' && !emittedText && reintentar && gastado() < MS_PARA_REINTENTAR) {
           console.warn(`[synoma] respuesta vacía (eventos: ${[...tipos].join(',') || 'ninguno'}) `
             + `stop_reason=${stopReason ?? 'ninguno'} usage=${JSON.stringify(usage ?? {})} `
-            + `comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]} — reintentando una vez`);
+            + `comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]} `
+            + `gastado=${gastado()}ms — reintentando una vez`);
           try {
             const otra = await reintentar();
             if (otra?.body) {
@@ -357,7 +412,7 @@ function toNdjson(body, cliente, pregunta, reintentar = null) {
           // Se guarda lo que alcanzó a llegar: es lo que el cliente tiene en
           // pantalla, y que el historial diga otra cosa lo confundiría.
           persistir();
-          controller.close();
+          cerrar();
           return;
         }
 
@@ -365,7 +420,7 @@ function toNdjson(body, cliente, pregunta, reintentar = null) {
           // Se deja TODO en el log: sin esto, "respuesta vacía" es un callejón sin
           // salida para diagnosticar. Los tipos de evento dicen si el modelo no
           // escribió nada o si el texto vino en una forma que no sabemos leer.
-          console.error('[synoma] SIGUE VACÍA tras el reintento. '
+          console.error('[synoma] SIGUE VACÍA. '
             + `eventos=${[...tipos].join(',') || 'ninguno'} `
             + `stop_reason=${stopReason ?? 'ninguno'} `
             + `usage=${JSON.stringify(usage ?? {})} `
@@ -419,14 +474,16 @@ function toNdjson(body, cliente, pregunta, reintentar = null) {
         }
       } catch (e) {
         console.error('[synoma] stream interrumpido:', e?.message ?? e);
-        emit({
-          type: 'error',
-          error: 'stream_aborted',
-          message: 'Se cortó la conexión con el motor. Probá de nuevo.',
-        });
+        try {
+          emit({
+            type: 'error',
+            error: 'stream_aborted',
+            message: 'Se cortó la conexión con el motor. Probá de nuevo.',
+          });
+        } catch { /* el consumidor ya se fue: no hay a quién avisarle */ }
         persistir();
       } finally {
-        controller.close();
+        cerrar();
       }
     },
   });
@@ -474,12 +531,23 @@ function parseOrigins(raw) {
 // arma con Intl para no depender de que el servidor esté en UTC.
 export function bloqueDeFecha(ahora = new Date()) {
   const zona = process.env.SYNOMA_ZONA_HORARIA || 'America/Argentina/Buenos_Aires';
-  const partes = new Intl.DateTimeFormat('es-AR', {
-    timeZone: zona, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  }).format(ahora);
-  const iso = new Intl.DateTimeFormat('en-CA', {
-    timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(ahora);
+  let partes;
+  let iso;
+  try {
+    partes = new Intl.DateTimeFormat('es-AR', {
+      timeZone: zona, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    }).format(ahora);
+    iso = new Intl.DateTimeFormat('en-CA', {
+      timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(ahora);
+  } catch (e) {
+    // Intl tira RangeError si el runtime no trae la base de zonas horarias
+    // completa, o si la zona configurada no existe. Antes eso hacía caer TODA la
+    // función por un bloque informativo: mejor la fecha en UTC que ninguna.
+    console.warn(`[synoma] zona horaria "${zona}" no disponible, usando UTC:`, e?.message ?? e);
+    iso = ahora.toISOString().slice(0, 10);
+    partes = iso;
+  }
 
   return [
     '=== HOY ===',

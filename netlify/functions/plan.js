@@ -13,10 +13,11 @@ import { clienteDeSesion } from './_auth.js';
 import { leerPieza } from './_biblioteca.js';
 import { parsearPlan, fecharPiezas, generarIcs, generarCsv } from './_plan.js';
 import { configPublica } from './_config.js';
+import { blindar } from './_http.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export default async (req) => {
+export default blindar('plan', async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (req.method !== 'GET') return json(405, { error: 'method_not_allowed' });
   if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
@@ -88,7 +89,7 @@ export default async (req) => {
       piezas,
     },
   });
-};
+});
 
 export const config = { path: '/api/plan' };
 

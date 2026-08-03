@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 176 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 192 tests en verde.
 
 ---
 
@@ -568,6 +568,77 @@ eran silenciosos:
 
 ---
 
+## 🔴 15. Un error inesperado llegaba sin identificarse
+
+**Lo que se veía.** Dos pantallas distintas, en dos días distintos:
+
+> ⚠️ El motor devolvió una respuesta vacía. Probá de nuevo.
+> ⚠️ No se pudo contactar al motor.
+
+Ninguna de las dos servía para nada. La segunda es peor: es **literalmente el
+mismo mensaje que sale si se corta el wifi**. No había forma de saber si el
+problema estaba en el código, en el deploy, en Netlify o en la conexión.
+
+**La causa raíz del segundo caso, y es un error propio.** El reintento automático
+de respuestas vacías (punto anterior) no miraba el reloj. Si el primer intento se
+comía 12 segundos y volvía vacío, el segundo empujaba el total por encima del tope
+de Netlify → la plataforma mataba la función → 502 con una página HTML → el
+navegador no podía leer ni el código ni el motivo. **Un arreglo pensado para que
+el cliente no viera un error le causaba uno peor y menos diagnosticable.**
+
+Ahora el reintento tiene presupuesto de tiempo, medido desde el arranque del
+pedido y no desde el arranque del stream — porque lo que Netlify corta es la
+invocación completa, incluida la espera hasta el primer token. Pasados 7 segundos
+ya no hay lugar para otra llamada: se informa el problema, que es recuperable, en
+lugar de arriesgar el 502.
+
+**Y tres cosas para que esto no vuelva a ser un diagnóstico a ciegas.**
+
+*Uno — todos los endpoints quedan blindados* (`_http.js`). Cualquier excepción no
+prevista sale como JSON con código `error_interno` y el stack completo va al log.
+Nunca más una página de error de Netlify llegando al navegador.
+
+*Dos — el navegador muestra el número de estado* cuando la respuesta no es JSON.
+Ese número es todo:
+
+| Código | Qué significa |
+|---|---|
+| 404 | la función no está publicada — problema de deploy |
+| 500 | se rompió el código |
+| 502 / 504 | tardó más que el tope de Netlify |
+
+Los tres se veían idénticos antes. Cada uno se arregla distinto.
+
+*Tres — un test de humo* (`test/humo.test.mjs`) que recorre TODOS los endpoints
+con la base caída, por cada método HTTP, y falla si alguno responde algo que no
+sea JSON con un código legible. También verifica que ninguna respuesta filtre la
+API key ni la contraseña de la base.
+
+Ese test existe por una lección concreta de este proyecto: hubo un bug donde
+faltaba un `import` en `_email.js`. `node --check` pasaba —la sintaxis era
+válida— y ninguna prueba tocaba esa rama, así que iba a explotar exactamente el
+día que se conectara el envío de emails, con clientes esperando el código.
+**Verificar la sintaxis no es verificar que el módulo corre.**
+
+**Dos arreglos más que salieron de buscar esto:**
+
+- **Doble cierre del stream.** En la rama de error se llamaba `controller.close()`
+  y el `finally` volvía a llamarlo. El segundo tira `TypeError`. Node se lo come,
+  así que no era la causa de lo que veíamos, pero en otro runtime rompe la
+  respuesta entera.
+- **`bloqueDeFecha()` podía tumbar la función.** `Intl` tira `RangeError` si el
+  runtime no trae la base de zonas horarias completa. Un bloque informativo no
+  puede voltear todo el pedido: ahora cae a UTC y avisa en el log.
+
+**Dos perillas nuevas, para no depender de un deploy si vuelve a pasar:**
+
+| Variable | Para qué |
+|---|---|
+| `SYNOMA_MAX_TOKENS` | bajar el largo de las respuestas si algo se sigue cortando |
+| `SYNOMA_MS_REINTENTO` | cuánto tiempo puede quedar antes de descartar el reintento |
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -605,12 +676,14 @@ rollback.
 | `SYNOMA_DIAS_RETENCION` | *(opcional)* días que se guarda el chat. Default 90. |
 | `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. |
 | `SYNOMA_ZONA_HORARIA` | *(opcional)* zona para las fechas. Default `America/Argentina/Buenos_Aires`. |
+| `SYNOMA_MAX_TOKENS` | *(opcional)* largo máximo de la respuesta. Default 2200. Bajalo si algo se corta. |
+| `SYNOMA_MS_REINTENTO` | *(opcional)* ms de margen para reintentar una respuesta vacía. Default 7000. |
 
 **Deploy:**
 
 ```bash
 npm install
-npm test              # 176 tests, deberían pasar todos
+npm test              # 192 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 

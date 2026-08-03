@@ -14,8 +14,9 @@ import {
   generarCodigo, guardarCodigo, pedidosRecientes, superoPedidos, upsertCliente, LIMITES,
 } from './_auth.js';
 import { configPublica } from './_config.js';
+import { blindar } from './_http.js';
 
-export default async (req) => {
+export default blindar('solicitar', async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (req.method !== 'POST') return json(405, { error: 'method_not_allowed' });
   if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
@@ -134,7 +135,7 @@ export default async (req) => {
     modo_desarrollo: envio.modo === 'log' || undefined,
     codigo_desarrollo: envio.modo === 'log' ? codigo : undefined,
   });
-};
+});
 
 export const config = { path: '/api/auth/solicitar' };
 

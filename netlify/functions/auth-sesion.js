@@ -8,8 +8,9 @@ import { urlDeBase, avisarSiFaltanTablas } from './_db.js';
 import { clienteDeSesion, cerrarSesion, cookieBorrada } from './_auth.js';
 import { leerPerfil } from './_perfil.js';
 import { configPublica } from './_config.js';
+import { blindar } from './_http.js';
 
-export default async (req) => {
+export default blindar('sesion', async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204 });
   if (!mismoOrigen(req)) return json(403, { error: 'forbidden_origin' });
 
@@ -76,7 +77,7 @@ export default async (req) => {
       perfil_cargado: perfilCargado,
     },
   });
-};
+});
 
 export const config = { path: '/api/auth/sesion' };
 

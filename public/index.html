@@ -1354,8 +1354,15 @@ async function send(){
 
     if(!res.ok){
       const info = await res.json().catch(()=>({}));
+      // Si la respuesta NO es JSON, no vino de nuestro código: es la página de
+      // error de Netlify. En ese caso el único dato útil es el número, y hay que
+      // mostrarlo — sin él, "no se pudo contactar al motor" es indistinguible de
+      // un wifi caído, y no hay forma de diagnosticar nada.
+      //   404 → la función no está desplegada
+      //   500 → se rompió el código
+      //   502/504 → tardó más que el tope de Netlify
       throw { code: info.error || ('http_' + res.status),
-              message: info.message || 'No se pudo contactar al motor.',
+              message: info.message || textoDeEstado(res.status),
               datos: info };
     }
 
@@ -1403,6 +1410,16 @@ async function send(){
     $('send-btn').disabled = false;
     SENDING = false;
   }
+}
+
+// El número de estado importa y hay que mostrarlo: es lo único que distingue
+// "la función no está desplegada" de "se rompió el código" de "tardó demasiado".
+// Sin él, los tres se ven igual y no hay por dónde empezar a buscar.
+function textoDeEstado(status){
+  if(status === 404) return 'El motor no está publicado en el servidor (404). Avisale a tu coach.';
+  if(status === 502 || status === 504) return 'La respuesta tardó más de lo que el servidor permite (' + status + '). Probá con un pedido más corto.';
+  if(status >= 500) return 'Se rompió algo del lado del servidor (' + status + '). Ya quedó registrado.';
+  return 'No se pudo contactar al motor (' + status + ').';
 }
 
 function handleSendError(err, body, acc){
