@@ -16,13 +16,16 @@ const TOKEN = 'token-de-prueba';
 // --- dobles de prueba -------------------------------------------------------
 
 // Arma un cuerpo SSE con la forma real de la API de Anthropic.
-function sseBody(chunks, { error = null, usage = null } = {}) {
+function sseBody(chunks, { error = null, usage = null, stopReason = 'end_turn' } = {}) {
   const events = [
     { type: 'message_start', message: { usage: { input_tokens: 500, cache_read_input_tokens: 7500 } } },
     ...chunks.map((t) => ({ type: 'content_block_delta', delta: { type: 'text_delta', text: t } })),
   ];
   if (error) events.push({ type: 'error', error });
-  else events.push({ type: 'message_delta', usage: usage ?? { output_tokens: 42 } }, { type: 'message_stop' });
+  else events.push(
+    { type: 'message_delta', delta: { stop_reason: stopReason }, usage: usage ?? { output_tokens: 42 } },
+    { type: 'message_stop' },
+  );
 
   const encoder = new TextEncoder();
   return new ReadableStream({
@@ -385,14 +388,19 @@ test('una respuesta vacía se reporta como error', async () => {
 
 // --- prompt caching ---------------------------------------------------------
 
-test('el system va en dos bloques, ambos con cache_control', async () => {
+test('los dos bloques cacheables van primero, y solo esos llevan cache_control', async () => {
   const spy = fakeFetch();
   globalThis.fetch = spy;
   const handler = await loadHandler();
   await handler(post(VALID));
 
   const { system } = spy.calls[0].payload;
-  assert.equal(system.length, 2, 'bloque global + bloque por cliente');
+  // Bloque 1: el prompt base (igual para todos). Bloque 2: el perfil del cliente.
+  // Bloque 3: la fecha de hoy, que cambia todos los días y por eso NO se cachea:
+  // si fuera parte del prefijo, invalidaría el caché de los 100 cada medianoche.
+  assert.equal(system.length, 3, 'base + perfil + fecha');
+  assert.equal(system[2].cache_control, undefined, 'la fecha no puede ir en el prefijo cacheado');
+  assert.match(system[2].text, /Hoy es /);
   assert.deepEqual(system[0].cache_control, { type: 'ephemeral' });
   assert.deepEqual(system[1].cache_control, { type: 'ephemeral' });
   assert.match(system[0].text, /^Sos Synoma/, 'bloque 1: el prompt base, idéntico para todos');
@@ -573,6 +581,79 @@ test('si guardar el turno falla, el cliente igual recibe su respuesta completa',
   assert.equal(eventos.at(-1).type, 'done');
 });
 
+// --- respuestas cortadas ----------------------------------------------------
+// Este era el peor de los bugs silenciosos que quedaban: /semana llegaba al tope
+// de tokens, el cliente recibía media tabla y NADA le indicaba que faltaba el
+// resto. Se llevaba dos piezas de un plan de cinco creyendo que era el plan.
+
+test('una respuesta cortada por el tope se marca como truncada', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['| Lun | ... |'], { stopReason: 'max_tokens' }) });
+  const handler = await loadHandler();
+  const eventos = await readNdjson(await handler(post({ mensaje: '/semana' })));
+
+  const done = eventos.at(-1);
+  assert.equal(done.type, 'done');
+  assert.equal(done.truncada, true, 'sin esto el corte pasa en silencio');
+});
+
+test('una respuesta completa NO se marca como truncada', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['todo el plan'], { stopReason: 'end_turn' }) });
+  const handler = await loadHandler();
+  const eventos = await readNdjson(await handler(post(VALID)));
+  assert.equal(eventos.at(-1).truncada, false);
+});
+
+test('la respuesta cortada se guarda igual, y se informa cuánto tardó', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['media tabla'], { stopReason: 'max_tokens' }) });
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  const eventos = await readNdjson(await handler(post({ mensaje: '/semana' })));
+  await new Promise((r) => setTimeout(r, 20));
+
+  // La duración es el dato que permite distinguir "se cortó por tokens" de "lo
+  // mató el tope de tiempo de Netlify", que se ven igual desde el navegador.
+  assert.equal(typeof eventos.at(-1).duracion_ms, 'number');
+  assert.equal(db.piezaGuardada()?.contenido, 'media tabla');
+});
+
+// --- la fecha ---------------------------------------------------------------
+
+test('el modelo recibe la fecha de hoy', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler();
+  await handler(post(VALID));
+
+  // Sin esto el modelo contesta "decime qué día es hoy" o inventa la cuenta de
+  // días, que es lo que efectivamente pasaba.
+  const bloque = spy.calls[0].payload.system.find((b) => /=== HOY ===/.test(b.text));
+  assert.ok(bloque, 'falta el bloque de fecha');
+  assert.match(bloque.text, /\d{4}-\d{2}-\d{2}/);
+  assert.match(bloque.text, /NUNCA le preguntes al cliente qué día es/);
+});
+
+test('el bloque de fecha no lleva cache_control', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler();
+  await handler(post(VALID));
+  const bloque = spy.calls[0].payload.system.find((b) => /=== HOY ===/.test(b.text));
+  // Cambia todos los días: si fuera parte del prefijo cacheado, cada medianoche
+  // invalidaría el caché de los 100 clientes a la vez.
+  assert.equal(bloque.cache_control, undefined);
+});
+
+test('la fecha respeta la zona horaria configurada', async () => {
+  const { bloqueDeFecha } = await import('../netlify/functions/synoma.js?t=' + Math.random());
+  // 3 de agosto a las 02:00 UTC es todavía el 2 de agosto en Buenos Aires.
+  const enUtc = new Date('2026-08-03T02:00:00Z');
+  process.env.SYNOMA_ZONA_HORARIA = 'America/Argentina/Buenos_Aires';
+  assert.match(bloqueDeFecha(enUtc), /2026-08-02/);
+  process.env.SYNOMA_ZONA_HORARIA = 'UTC';
+  assert.match(bloqueDeFecha(enUtc), /2026-08-03/);
+  delete process.env.SYNOMA_ZONA_HORARIA;
+});
+
 // --- la biblioteca ----------------------------------------------------------
 
 test('un comando de contenido guarda la pieza y lo avisa en el evento done', async () => {
@@ -639,11 +720,11 @@ test('/racha recibe un tercer bloque de system con la biblioteca', async () => {
   await handler(post({ mensaje: '/racha' }));
 
   const { system } = spy.calls[0].payload;
-  assert.equal(system.length, 3, 'base + perfil + biblioteca');
-  assert.match(system[2].text, /BIBLIOTECA DEL CLIENTE/);
-  assert.match(system[2].text, /nutricionista/);
+  assert.equal(system.length, 4, 'base + perfil + fecha + biblioteca');
+  assert.match(system[3].text, /BIBLIOTECA DEL CLIENTE/);
+  assert.match(system[3].text, /nutricionista/);
   // Sin cache_control: es un bloque chico y distinto en cada repaso.
-  assert.equal(system[2].cache_control, undefined);
+  assert.equal(system[3].cache_control, undefined);
 });
 
 test('los demás comandos no pagan el bloque de biblioteca', async () => {
@@ -651,7 +732,7 @@ test('los demás comandos no pagan el bloque de biblioteca', async () => {
   globalThis.fetch = spy;
   const handler = await loadHandler({}, fakeDb({ piezas: [{ tipo: 'post', titulo: 't', estado: 'nueva', creado_en: 'x', publicado_en: null }] }));
   await handler(post({ mensaje: '/semana' }));
-  assert.equal(spy.calls[0].payload.system.length, 2);
+  assert.equal(spy.calls[0].payload.system.length, 3, 'sin el bloque de biblioteca');
 });
 
 test('si la biblioteca no se puede leer, /racha responde igual', async () => {
@@ -666,7 +747,7 @@ test('si la biblioteca no se puede leer, /racha responde igual', async () => {
   const handler = await loadHandler({}, roto);
   const res = await handler(post({ mensaje: '/racha' }));
   assert.equal(res.status, 200);
-  assert.equal(spy.calls[0].payload.system.length, 2);
+  assert.equal(spy.calls[0].payload.system.length, 3, 'responde sin el bloque de biblioteca');
 });
 
 // --- reintentos -------------------------------------------------------------
@@ -732,5 +813,5 @@ test('usa claude-sonnet-5', async () => {
   const handler = await loadHandler();
   await handler(post(VALID));
   assert.equal(spy.calls[0].payload.model, 'claude-sonnet-5');
-  assert.equal(spy.calls[0].payload.max_tokens, 2500);
+  assert.equal(spy.calls[0].payload.max_tokens, 2200);
 });

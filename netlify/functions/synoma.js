@@ -32,7 +32,16 @@ import { historial, paraElModelo, guardarTurno, MENSAJES_CONTEXTO } from './_con
 import { guardarSiEsPieza, resumenParaRacha, bloqueDeRacha } from './_biblioteca.js';
 
 const MODEL = 'claude-sonnet-5';
-const MAX_TOKENS = 2500;
+// Cuánto puede escribir Claude en una respuesta.
+//
+// Esto NO es un presupuesto de dinero (se paga lo que escribe, no el tope), es un
+// presupuesto de TIEMPO: Netlify corta la función a los 10 s (26-30 s en los
+// planes pagos) y el streaming no exime de ese tope, porque cuenta la duración
+// total de la invocación. A ~60-80 tokens por segundo, 26 s son unos 2.000
+// tokens. Por eso el tope está donde está: subirlo no arregla nada, solo cambia
+// "se cortó por largo" (recuperable, se puede continuar) por "se cortó la
+// conexión" (se pierde el resto).
+const MAX_TOKENS = 2200;
 const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
 
@@ -127,7 +136,13 @@ export default async (req) => {
     { type: 'text', text: bloqueDePerfil(perfil), cache_control: { type: 'ephemeral' } },
   ];
 
-  // Bloque 3, SOLO para /racha: el listado de su biblioteca con los estados.
+  // El modelo no sabe qué día es. Sin esto contesta cosas como "no la grabes
+  // hasta que me digas qué día es hoy", o inventa una cuenta de días mal hecha.
+  // Va sin cache_control porque cambia todos los días: si fuera parte del prefijo
+  // cacheado, invalidaría el caché de los 100 clientes cada medianoche.
+  system.push({ type: 'text', text: bloqueDeFecha() });
+
+  // Bloque 4, SOLO para /racha: el listado de su biblioteca con los estados.
   // /racha pregunta "¿qué publicaste de lo que planificamos?" y sin este dato el
   // modelo no tiene con qué contestar: pregunta de nuevo lo que ya está anotado.
   // Va sin cache_control y solo en este comando, para no pagar estos tokens en
@@ -241,6 +256,8 @@ function toNdjson(body, cliente, pregunta) {
       let usage = null;
       let emittedText = false;
       let respuesta = '';
+      let stopReason = null;
+      const arranque = Date.now();
 
       // Guardar el turno pasa DESPUÉS de cerrar el stream y sin await: el
       // cliente ya tiene su respuesta completa en pantalla, y una base lenta no
@@ -275,8 +292,13 @@ function toNdjson(body, cliente, pregunta) {
               emit({ type: 'text', text: ev.delta.text });
             } else if (ev.type === 'message_start' && ev.message?.usage) {
               usage = { ...(usage ?? {}), ...ev.message.usage };
-            } else if (ev.type === 'message_delta' && ev.usage) {
-              usage = { ...(usage ?? {}), ...ev.usage };
+            } else if (ev.type === 'message_delta') {
+              if (ev.usage) usage = { ...(usage ?? {}), ...ev.usage };
+              // Acá viene el motivo por el que el modelo dejó de escribir.
+              // 'max_tokens' significa que la respuesta quedó cortada a mitad de
+              // frase. Antes esto pasaba en silencio: el cliente recibía media
+              // tabla y no tenía forma de saber que faltaba algo.
+              if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
             } else if (ev.type === 'error') {
               // Error a mitad del stream. Se avisa; no se finge éxito.
               console.error('[synoma] error en stream:', ev.error);
@@ -317,7 +339,26 @@ function toNdjson(body, cliente, pregunta) {
             console.error('[synoma] no se pudo guardar la pieza:', e?.message ?? e);
           }
 
-          emit({ type: 'done', usage, pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null });
+          // Se deja en el log la duración y el motivo del corte. Es el dato que
+          // permite distinguir "se cortó por el tope de tokens" de "lo mató el
+          // tope de tiempo de Netlify", que se ven igual desde el navegador y se
+          // arreglan de forma distinta.
+          const duracion = Date.now() - arranque;
+          if (stopReason && stopReason !== 'end_turn') {
+            console.warn(`[synoma] respuesta incompleta: stop_reason=${stopReason} duracion=${duracion}ms `
+              + `caracteres=${respuesta.length} comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]}`);
+          } else {
+            console.log(`[synoma] ok en ${duracion}ms, ${respuesta.length} caracteres`);
+          }
+
+          emit({
+            type: 'done',
+            usage,
+            duracion_ms: duracion,
+            // El front usa esto para mostrar el aviso y el botón de continuar.
+            truncada: stopReason === 'max_tokens',
+            pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null,
+          });
           persistir();
         }
       } catch (e) {
@@ -371,6 +412,25 @@ function parseOrigins(raw) {
     .split(',')
     .map((o) => o.trim().replace(/\/$/, ''))
     .filter(Boolean);
+}
+
+// La fecha de hoy, en la zona horaria del cliente (Argentina por defecto). Se
+// arma con Intl para no depender de que el servidor esté en UTC.
+export function bloqueDeFecha(ahora = new Date()) {
+  const zona = process.env.SYNOMA_ZONA_HORARIA || 'America/Argentina/Buenos_Aires';
+  const partes = new Intl.DateTimeFormat('es-AR', {
+    timeZone: zona, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  }).format(ahora);
+  const iso = new Intl.DateTimeFormat('en-CA', {
+    timeZone: zona, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(ahora);
+
+  return [
+    '=== HOY ===',
+    `Hoy es ${partes} (${iso}).`,
+    'Usá esta fecha para cualquier cuenta de días, plazo o calendario. NUNCA le preguntes al cliente qué día es: ya lo sabés.',
+    '=== FIN ===',
+  ].join('\n');
 }
 
 // El navegador manda { mensaje: "..." }. Se acepta también el formato viejo

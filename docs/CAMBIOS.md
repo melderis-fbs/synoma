@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 132 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 176 tests en verde.
 
 ---
 
@@ -454,6 +454,120 @@ esto.
 
 ---
 
+## 🔴 12. `/semana` se cortaba a la mitad y no avisaba nada
+
+**Lo que se veía.** `/semana` devolvía un preámbulo largo y después la tabla, que
+se cortaba en la fila 2 de 5 — a mitad de palabra. Sin ningún error en pantalla.
+El cliente se llevaba dos piezas de un plan de cinco creyendo que era el plan.
+
+**Por qué pasaba.** Netlify corta la función a los 10 segundos (26-30 en los
+planes pagos) y **el streaming no exime de ese tope**: cuenta la duración total
+de la invocación, no el tiempo hasta el primer byte. A 60-80 tokens por segundo,
+26 segundos son unos 2.000 tokens de salida. Una tabla de 8 columnas × 5 filas
+con un preámbulo por delante no entra.
+
+**Lo peor no era el corte, era el silencio.** La API avisa por qué dejó de
+escribir (`stop_reason`) y nosotros lo tirábamos a la basura, así que una
+respuesta truncada llegaba al navegador indistinguible de una completa.
+
+**El arreglo, en cuatro partes.**
+
+*Uno — se detecta el corte y se avisa.*
+
+```js
+if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+...
+emit({ type: 'done', usage, truncada: stopReason === 'max_tokens', duracion_ms });
+```
+
+En pantalla aparece un aviso ámbar: *"✂️ Esta respuesta quedó cortada por el
+largo"*, con un botón **Continuar desde donde quedó**. Y como el historial ahora
+vive en el servidor (punto 9), Synoma sabe exactamente dónde se cortó: sigue sin
+repetir nada.
+
+*Dos — se acorta la salida en lugar de agrandar el tope.* Subir `MAX_TOKENS` no
+arregla nada: solo cambia "se cortó por largo" (recuperable) por "se cortó la
+conexión" (se pierde todo). Lo que se cambió es el formato: `/semana` ahora
+arranca **directo con la tabla**, sin preámbulo, con celdas cortas y columnas
+fijas. Los avisos van después, en dos líneas.
+
+*Tres — queda registrado cuál de los dos topes fue.* El log deja
+`stop_reason` y la duración en milisegundos. Es lo que permite distinguir "se
+cortó por tokens" de "lo mató el tope de tiempo de Netlify", que desde el
+navegador se ven igual y se arreglan distinto.
+
+*Cuatro — si aun así se corta*, la salida es mover `/api/synoma` a Netlify Edge
+Functions, que están hechas para streaming largo. No se hizo ahora porque es un
+cambio de runtime (Deno) que no se puede validar sin deploy, y con 100 clientes
+adentro no se toca a ciegas. El log de arriba dice si hace falta.
+
+---
+
+## 🔴 13. El modelo no sabía qué día era
+
+**Lo que se veía**, textual, en una respuesta real de `/semana`:
+
+> *"la pieza de '151 días' queda con fecha pendiente de confirmar — no la grabes
+> hasta que me digas qué día es hoy"*
+
+**Por qué.** Nunca le pasamos la fecha. Un modelo de lenguaje no tiene reloj: sin
+que se la digas, o pregunta, o inventa una cuenta de días mal hecha.
+
+**El arreglo.** Un bloque de sistema con la fecha de hoy en la zona horaria del
+cliente (`America/Argentina/Buenos_Aires` por defecto, configurable con
+`SYNOMA_ZONA_HORARIA`), con la instrucción explícita de no preguntarla nunca.
+
+Va **sin `cache_control`** a propósito: cambia todos los días, y si fuera parte
+del prefijo cacheado invalidaría el caché de los 100 clientes cada medianoche.
+
+---
+
+## 🟢 14. El plan semanal como calendario descargable
+
+**El problema.** La tabla se lee bien en el chat de una computadora. En el
+teléfono se lee de costado, y como plan de trabajo no sirve: no entra en la
+agenda, no se puede imprimir, no se tilda lo que ya se hizo.
+
+**El arreglo.** El servidor convierte la tabla en datos y de ahí salen tres cosas:
+
+| | Para qué |
+|---|---|
+| **Vista de calendario** | Una tarjeta por día con el gancho grande, el punteo, el dolor que ataca y los minutos de producción. En el celular se apilan. |
+| **`.ics`** | Se importa a Google Calendar, al iPhone y a Outlook. Cada pieza queda como evento de día completo con el gancho y el punteo en la descripción. |
+| **`.csv`** | Abre en Excel y en Sheets, con una columna "Publicada" vacía para tildar. |
+
+**Las fechas no las calcula el modelo.** El modelo escribe solo el día de la
+semana (`Lun`); la fecha real la calcula el servidor desde el día en que se
+generó el plan. Los modelos de lenguaje son malos con aritmética de fechas —el
+punto 13 es la prueba— y una fecha mal calculada dentro de un archivo que se
+importa a la agenda es peor que no tener el archivo.
+
+Y se calculan desde la fecha de creación del plan, no desde hoy: si el cliente
+abre en septiembre un plan de agosto, tiene que ver agosto.
+
+**Tres detalles que parecen menores y no lo son:**
+
+- El `.ics` va plegado a 75 caracteres con CRLF, como pide el RFC 5545. Sin
+  plegar, Outlook descarta el evento entero sin avisar.
+- El `.csv` arranca con BOM. Sin él, Excel en Windows muestra "Miércoles" roto.
+- Una celda que empieza con `=`, `+`, `-` o `@` se escapa: Excel la interpretaría
+  como fórmula, y un gancho que arranca con un guion es normal en este producto.
+
+**Si el modelo se sale del formato**, el endpoint devuelve 422 y la app sigue
+mostrando el texto plano con un mensaje que dice qué hacer. Un plan que no se
+puede convertir a calendario sigue siendo un plan.
+
+**Dos bugs propios que encontraron los tests**, y valen la pena porque los dos
+eran silenciosos:
+
+1. `"Sin venta"` se clasificaba como **venta** — buscar `vent` sin más marcaba
+   como venta justo las piezas que no lo eran, y el calendario mostraba cinco
+   piezas vendiendo cuando había tres educativas.
+2. `dijo "esto"` quedaba como `dijo "esto` — la limpieza de comillas cortaba la
+   de cierre, dejando una comilla sin cerrar en el título del evento.
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -490,12 +604,13 @@ rollback.
 | `RENOVACION_URL` | a dónde mandar a quien terminó el programa y quiere seguir |
 | `SYNOMA_DIAS_RETENCION` | *(opcional)* días que se guarda el chat. Default 90. |
 | `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. |
+| `SYNOMA_ZONA_HORARIA` | *(opcional)* zona para las fechas. Default `America/Argentina/Buenos_Aires`. |
 
 **Deploy:**
 
 ```bash
 npm install
-npm test              # 132 tests, deberían pasar todos
+npm test              # 176 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 
@@ -518,8 +633,13 @@ Las migraciones (`db/*.sql`) corren solas en cada build, en orden y una sola vez
    **Ya la grabé** y después **Ya la publiqué**.
 8. Escribí `/racha`. Tiene que nombrarte esa pieza y su estado, no preguntarte
    de cero qué hiciste.
-9. Probá con un email que no tenga el tag en GHL. Tiene que ofrecer la
-   suscripción, **no** un error.
+9. Pedile un 📅 **plan semanal**. Tiene que arrancar **directo con la tabla**,
+   sin presentación. Tocá **📅 Ver como calendario** y después
+   **Agregar a mi calendario**: el archivo tiene que importarse a Google Calendar
+   con las 5 piezas en sus días.
+10. Preguntale "¿qué día es hoy?". Tiene que responder la fecha, no preguntártela.
+11. Probá con un email que no tenga el tag en GHL. Tiene que ofrecer la
+    suscripción, **no** un error.
 
 **Y algo que no es código:** si la key de Anthropic viajó alguna vez por chat o
 mail, rotala. Cualquier secreto que pasó por un canal no seguro hay que darlo por

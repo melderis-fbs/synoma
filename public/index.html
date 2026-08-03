@@ -146,6 +146,47 @@
   .guardada-nota button{background:none;border:none;color:var(--beige-d);font-weight:700;font-size:11.5px;
     cursor:pointer;text-decoration:underline;font-family:'Inter',sans-serif;padding:0}
 
+  /* ---------- CALENDARIO ---------- */
+  .modal{position:fixed;inset:0;background:rgba(17,17,17,.62);z-index:100;display:none;overflow-y:auto;padding:24px 14px}
+  .modal.on{display:block}
+  .modal-caja{max-width:1040px;margin:0 auto;background:var(--bg);border-radius:18px;padding:26px 26px 30px}
+  .modal-cab{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
+  .modal-cab h3{font-size:22px;font-weight:800;letter-spacing:-.01em;color:var(--black)}
+  .modal-cab p{font-size:13px;color:var(--muted);margin-top:4px}
+  .cerrar{background:none;border:1px solid var(--border);border-radius:99px;width:34px;height:34px;
+    cursor:pointer;color:var(--muted);font-size:16px;flex:0 0 auto;font-family:'Inter',sans-serif}
+  .cerrar:hover{border-color:var(--beige);color:var(--ink)}
+  /* auto-fit y no columnas fijas: con 5 piezas quedan 5 columnas en escritorio y
+     una sola en el teléfono, sin escribir dos layouts. */
+  .cal{display:grid;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));gap:12px;margin-top:22px}
+  .dia{border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .dia-cab{background:var(--cream);padding:10px 12px}
+  .dia-cab b{display:block;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--black);font-weight:800}
+  .dia-cab span{font-size:11px;color:var(--muted)}
+  .dia-cuerpo{padding:12px;display:flex;flex-direction:column;gap:8px;flex:1}
+  .dia .fmt{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;color:var(--beige-d)}
+  .dia .gan{font-size:13.5px;font-weight:700;line-height:1.42;color:var(--black)}
+  .dia ul{margin:0;padding-left:15px;font-size:12px;color:var(--muted);line-height:1.55}
+  .dia .dolor{font-size:11.5px;color:var(--muted);line-height:1.5}
+  .dia .pie{margin-top:auto;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding-top:4px}
+  .tag-int{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;font-weight:800;border-radius:99px;padding:3px 8px}
+  .tag-int.venta{background:#FFF1EF;color:#C25A52}
+  .tag-int.educativa{background:#EAF6EE;color:#3E8C5C}
+  .tag-min{font-size:10.5px;color:var(--soft);font-weight:600}
+  .descargas{display:flex;gap:10px;flex-wrap:wrap;margin-top:24px;align-items:center}
+  .descarga{display:inline-flex;align-items:center;gap:8px;background:var(--black);color:#fff;border-radius:99px;
+    padding:11px 20px;font-size:13px;font-weight:700;text-decoration:none}
+  .descarga.claro{background:var(--bg);color:var(--ink);border:1px solid var(--border)}
+  .descarga:hover{opacity:.85}
+  .descargas small{color:var(--muted);font-size:11.5px;flex-basis:100%;line-height:1.6}
+
+  /* Aviso de respuesta cortada. Va destacado a propósito: antes esto pasaba en
+     silencio y el cliente se llevaba media tabla creyendo que era todo. */
+  .corte{margin-top:12px;padding:12px 14px;background:#FFF7E8;border:1px solid #EAD9B0;border-radius:11px;
+    font-size:12.5px;color:#8A7440;line-height:1.55}
+  .corte button{margin-top:9px;background:var(--black);border:none;border-radius:99px;padding:8px 16px;color:#fff;
+    font-size:12px;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
+
   /* ---------- video explicativo ---------- */
   .vid{margin:14px 0 0;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--black)}
   .vid-facade{position:relative;width:100%;aspect-ratio:16/9;display:flex;flex-direction:column;
@@ -212,6 +253,10 @@
     #view-biblioteca h2{font-size:26px}
     #view-biblioteca .wrap{padding:28px 16px 60px}
     .grilla{grid-template-columns:1fr;gap:12px}
+    .modal{padding:12px 8px}
+    .modal-caja{padding:20px 16px 24px}
+    .cal{grid-template-columns:1fr}
+    .descarga{flex:1;justify-content:center}
   }
 </style>
 </head>
@@ -390,6 +435,21 @@
     <div class="filtros" id="filtros"></div>
     <div class="grilla" id="grilla"></div>
     <div class="vacio" id="biblioteca-vacia" hidden></div>
+  </div>
+</div>
+
+<!-- ============ CALENDARIO (sobre cualquier pantalla) ============ -->
+<div class="modal" id="modal-cal">
+  <div class="modal-caja">
+    <div class="modal-cab">
+      <div>
+        <h3 id="cal-titulo">Mi semana de contenido</h3>
+        <p id="cal-sub"></p>
+      </div>
+      <button class="cerrar" onclick="cerrarCalendario()" aria-label="Cerrar">✕</button>
+    </div>
+    <div class="cal" id="cal-grilla"></div>
+    <div class="descargas" id="cal-descargas"></div>
   </div>
 </div>
 
@@ -906,6 +966,13 @@ function tarjetaDePieza(p){
   est.textContent = NOMBRE_ESTADO[p.estado] || p.estado;
   pie.appendChild(est);
 
+  // El plan semanal se abre como calendario, que es su forma útil. El resto de
+  // las piezas se leen como texto y listo.
+  if(p.tipo === 'plan'){
+    const cal = mini('📅 Calendario', () => abrirCalendario(p.id));
+    pie.appendChild(cal);
+  }
+
   const ver = mini(card.classList.contains('abierta') ? 'Ocultar' : 'Ver', () => {
     card.classList.toggle('abierta');
     ver.textContent = card.classList.contains('abierta') ? 'Ocultar' : 'Ver';
@@ -999,11 +1066,163 @@ function notaGuardada(pieza){
   n.className = 'guardada-nota';
   const t = document.createElement('span');
   t.textContent = '📚 Guardado en Mis contenidos';
+  n.appendChild(t);
+
+  // Si es un plan semanal, el atajo al calendario va primero: es lo que el
+  // cliente quiere hacer con esa respuesta, no volver a leerla en el chat.
+  if(pieza?.tipo === 'plan' && pieza.id){
+    const c = document.createElement('button');
+    c.textContent = '📅 Ver como calendario';
+    c.onclick = () => abrirCalendario(pieza.id);
+    n.appendChild(c);
+  }
+
   const b = document.createElement('button');
   b.textContent = 'Ver mi biblioteca';
   b.onclick = () => abrirBiblioteca();
-  n.append(t, b);
+  n.appendChild(b);
   return n;
+}
+
+/* =============================================================================
+   El plan semanal como calendario
+   =============================================================================
+   La tabla de /semana se lee bien en el chat, pero como plan de trabajo es
+   incómoda: en el celular se lee de costado y no se puede llevar a la agenda.
+   El servidor la convierte en datos (/api/plan) y acá se pinta como calendario,
+   con descarga a .ics y a .csv. */
+
+async function abrirCalendario(piezaId){
+  const modal = $('modal-cal');
+  $('cal-grilla').replaceChildren();
+  $('cal-descargas').replaceChildren();
+  $('cal-sub').textContent = 'Armando tu calendario…';
+  modal.classList.add('on');
+  document.body.style.overflow = 'hidden';
+
+  let res, datos;
+  try{ ({ res, datos } = await api('/api/plan?id=' + encodeURIComponent(piezaId))); }
+  catch(e){ $('cal-sub').textContent = '⚠️ Sin conexión. Revisá tu internet.'; return; }
+
+  if(!res.ok){
+    if(datos?.error === 'sin_sesion'){ cerrarCalendario(); volverAlLogin(datos.message); return; }
+    $('cal-sub').textContent = '⚠️ ' + (datos?.message || 'No pudimos armar el calendario.');
+    return;
+  }
+
+  pintarCalendario(datos.plan, piezaId);
+}
+
+function cerrarCalendario(){
+  $('modal-cal').classList.remove('on');
+  document.body.style.overflow = '';
+}
+
+function pintarCalendario(plan, piezaId){
+  $('cal-titulo').textContent = plan.titulo || 'Mi semana de contenido';
+
+  const educativas = plan.piezas.filter(p => p.intencion !== 'venta').length;
+  const ventas = plan.piezas.length - educativas;
+  $('cal-sub').textContent =
+    `${plan.piezas.length} piezas · ${educativas} educativas · ${ventas} de venta`;
+
+  const grilla = $('cal-grilla');
+  grilla.replaceChildren();
+
+  for(const p of plan.piezas){
+    const dia = document.createElement('div');
+    dia.className = 'dia';
+
+    const cab = document.createElement('div');
+    cab.className = 'dia-cab';
+    const b = document.createElement('b');
+    b.textContent = p.dia || '';
+    const f = document.createElement('span');
+    f.textContent = fechaLarga(p.fecha);
+    cab.append(b, f);
+
+    const cuerpo = document.createElement('div');
+    cuerpo.className = 'dia-cuerpo';
+
+    if(p.formato || p.pilar){
+      const fmt = document.createElement('div');
+      fmt.className = 'fmt';
+      fmt.textContent = [p.formato, p.pilar].filter(Boolean).join(' · ');
+      cuerpo.appendChild(fmt);
+    }
+
+    if(p.gancho){
+      const g = document.createElement('div');
+      g.className = 'gan';
+      g.textContent = p.gancho;
+      cuerpo.appendChild(g);
+    }
+
+    if(p.dolor){
+      const d = document.createElement('div');
+      d.className = 'dolor';
+      d.textContent = '↳ ' + p.dolor;
+      cuerpo.appendChild(d);
+    }
+
+    if(p.punteo && p.punteo.length){
+      const ul = document.createElement('ul');
+      for(const idea of p.punteo){
+        const li = document.createElement('li');
+        li.textContent = idea;
+        ul.appendChild(li);
+      }
+      cuerpo.appendChild(ul);
+    }
+
+    const pie = document.createElement('div');
+    pie.className = 'pie';
+    const int = document.createElement('span');
+    int.className = 'tag-int ' + (p.intencion === 'venta' ? 'venta' : 'educativa');
+    int.textContent = p.intencion === 'venta' ? 'Venta' : 'Educativa';
+    pie.appendChild(int);
+    if(p.tiempo){
+      const t = document.createElement('span');
+      t.className = 'tag-min';
+      t.textContent = p.tiempo;
+      pie.appendChild(t);
+    }
+    cuerpo.appendChild(pie);
+
+    dia.append(cab, cuerpo);
+    grilla.appendChild(dia);
+  }
+
+  // Enlaces normales, no fetch: así el navegador maneja la descarga como
+  // descarga. En el iPhone, tocar el .ics abre directamente "agregar al
+  // calendario" en vez de mostrar el archivo como texto.
+  const desc = $('cal-descargas');
+  desc.replaceChildren();
+
+  const ics = document.createElement('a');
+  ics.className = 'descarga';
+  ics.href = '/api/plan?id=' + encodeURIComponent(piezaId) + '&formato=ics';
+  ics.textContent = '📅 Agregar a mi calendario';
+  desc.appendChild(ics);
+
+  const csv = document.createElement('a');
+  csv.className = 'descarga claro';
+  csv.href = '/api/plan?id=' + encodeURIComponent(piezaId) + '&formato=csv';
+  csv.textContent = '📊 Descargar en Excel';
+  desc.appendChild(csv);
+
+  const nota = document.createElement('small');
+  nota.textContent = 'El archivo de calendario entra en Google Calendar, en el iPhone y en Outlook: cada pieza queda como un evento de ese día, con el gancho y el punteo en la descripción.';
+  desc.appendChild(nota);
+}
+
+function fechaLarga(iso){
+  if(!iso) return '';
+  try{
+    // Con la T00:00:00 y sin zona, se interpreta local y no se corre un día.
+    return new Date(iso + 'T00:00:00').toLocaleDateString('es-AR',
+      { day:'numeric', month:'long' });
+  }catch(e){ return iso; }
 }
 
 // El caso contrario: la respuesta no vino de un comando de contenido, así que no
@@ -1080,6 +1299,25 @@ function errorNote(message){
   return n;
 }
 
+// La respuesta llegó completa hasta donde el modelo pudo escribir, pero se cortó.
+// El botón le pide seguir desde donde quedó: como el historial vive en el
+// servidor, Synoma sabe exactamente dónde se cortó sin tener que repetir nada.
+function avisoDeCorte(){
+  const n = document.createElement('div');
+  n.className = 'corte';
+  const t = document.createElement('div');
+  t.textContent = '✂️ Esta respuesta quedó cortada por el largo — no llegó hasta el final.';
+  const b = document.createElement('button');
+  b.textContent = 'Continuar desde donde quedó →';
+  b.onclick = () => {
+    b.disabled = true;
+    $('input').value = 'Seguí exactamente desde donde te cortaste, sin repetir nada de lo que ya escribiste y sin volver a presentar.';
+    send();
+  };
+  n.append(t, b);
+  return n;
+}
+
 function askCmd(cmd, hint){
   $('input').value = cmd + ' ';
   $('input').placeholder = hint;
@@ -1143,7 +1381,10 @@ async function send(){
           // El servidor confirma si la pieza quedó guardada. Si no vino de un
           // comando de contenido, se ofrece el botón para guardarla a mano.
           if(body && acc){
-            body.parentNode.appendChild(ev.pieza ? notaGuardada() : botonGuardar(acc));
+            body.parentNode.appendChild(ev.pieza ? notaGuardada(ev.pieza) : botonGuardar(acc));
+            // La respuesta se cortó por largo. Antes esto pasaba en silencio: el
+            // cliente se llevaba media tabla creyendo que era todo.
+            if(ev.truncada) body.parentNode.appendChild(avisoDeCorte());
             scrollDown();
           }
         } else if(ev.type === 'error'){
@@ -1209,6 +1450,11 @@ function demoReply(){
 /* =============================================================================
    Arranque
    ============================================================================= */
+
+// Escape cierra el calendario, y tocar el fondo oscuro también. Sin esto, en el
+// celular hay que buscar la ✕ chiquita arriba a la derecha.
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') cerrarCalendario(); });
+$('modal-cal').addEventListener('click', e=>{ if(e.target.id === 'modal-cal') cerrarCalendario(); });
 
 $('input').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
 $('email-input').addEventListener('keydown', e=>{ if(e.key==='Enter'){ pedirCodigo(); }});

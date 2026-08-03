@@ -147,6 +147,18 @@ export async function listarPiezas(clienteId, { estado = null, tipo = null, limi
   return rows;
 }
 
+// Una pieza sola. El filtro por cliente_id va junto al id: sin eso, alguien con
+// el id de una pieza ajena podría leerla.
+export async function leerPieza(clienteId, piezaId) {
+  const sql = getSql();
+  const rows = await sql`
+    SELECT id, tipo, titulo, contenido, comando, estado, publicado_en, creado_en
+    FROM piezas
+    WHERE id = ${piezaId} AND cliente_id = ${clienteId}
+  `;
+  return rows[0] ?? null;
+}
+
 // Resumen compacto para /racha: qué produjo, qué publicó y qué quedó pendiente.
 // Va como bloque extra del system SOLO cuando el mensaje es /racha, para no
 // pagar estos tokens en cada pedido.
