@@ -96,6 +96,11 @@
   .welcome .mark{margin-bottom:18px}
   .welcome h2{font-size:28px;font-weight:800;letter-spacing:-.02em;color:var(--black);margin-bottom:8px}
   .welcome p{font-size:14.5px;line-height:1.6}
+  .welcome p + p{margin-top:10px}
+  /* La promesa de memoria va en gris chico: es tranquilizadora, no es la
+     instrucción principal. El cliente viene de un Proyecto de ChatGPT donde el
+     hilo quedaba, y necesita saber de entrada que acá también. */
+  .welcome .nota-memoria{font-size:12.5px;color:var(--muted);margin-top:16px}
   .composer{display:flex;gap:12px;padding:16px 26px;border-top:1px solid var(--border);background:var(--bg)}
   .composer textarea{flex:1;background:var(--paper);border:1px solid var(--border);border-radius:12px;padding:14px 16px;
     color:var(--ink);font-size:14px;resize:none;height:52px;outline:none;font-family:'Inter',sans-serif}
@@ -252,6 +257,14 @@
       <textarea id="f-encuesta" placeholder="Pegá acá las frases exactas de tus clientes…"></textarea>
     </div>
 
+    <div class="step-card">
+      <span class="pill">Paso 4 · opcional</span>
+      <label>Mi Fundación</label>
+      <small>Los 8 bloques: tu porqué, tu objetivo, tus 3-5 pilares, tu banco de historias, tus opiniones fuertes, a quién le hablás, su mundo interno y tu voz. <b>¿No la tenés escrita?</b> Guardá lo que ya cargaste, entrá al dashboard y escribí <b>/fundacion</b>: Synoma te la arma preguntándote de a un bloque por vez, y después la pegás acá.</small>
+      <div data-video="fundacion"></div>
+      <textarea id="f-fundacion" placeholder="Pegá acá tu Fundación (o dejalo vacío y usá /fundacion)…"></textarea>
+    </div>
+
     <button class="btn" id="btn-guardar" onclick="guardarIdentidad()">Guardar y entrar a mi dashboard →</button>
     <div id="setup-msg"></div>
   </div>
@@ -264,11 +277,14 @@
     <div class="menu">
       <span class="who" id="who"></span>
       <button onclick="abrirIdentidad()">Mi identidad</button>
+      <button onclick="borrarHistorial()">Borrar chat</button>
       <button onclick="salir()">Salir</button>
     </div>
   </div>
   <div class="dash-body">
     <div class="cmds">
+      <div class="section-label"><b>Empezá acá</b></div>
+      <button class="cmd" onclick="runCmd('/fundacion')"><span class="em">📐</span> Armar mi Fundación</button>
       <div class="section-label"><b>Planificar</b></div>
       <button class="cmd" onclick="runCmd('/semana')"><span class="em">📅</span> Mi semana de contenido</button>
       <button class="cmd" onclick="askCmd('/idea','¿Sobre qué tema?')"><span class="em">💡</span> Ideas sobre un tema</button>
@@ -284,13 +300,20 @@
       <button class="cmd" onclick="askCmd('/objecion','Pegá el comentario o DM:')"><span class="em">💬</span> Responder objeción</button>
       <div class="section-label"><b>Medir</b></div>
       <button class="cmd" onclick="runCmd('/racha')"><span class="em">📊</span> Mi racha semanal</button>
+      <div class="section-label"><b>Afinar mi fundación</b></div>
+      <button class="cmd" onclick="runCmd('/pilares')"><span class="em">🏛️</span> Mis pilares de contenido</button>
+      <button class="cmd" onclick="runCmd('/persona')"><span class="em">🎯</span> A quién le hablo</button>
+      <button class="cmd" onclick="runCmd('/hottakes')"><span class="em">⚡</span> Mis opiniones fuertes</button>
+      <button class="cmd" onclick="runCmd('/banco')"><span class="em">📖</span> Mi banco de historias</button>
     </div>
     <div class="chat">
       <div class="msgs" id="msgs">
         <div class="welcome" id="welcome">
           <div class="mark">↑</div>
           <h2>Hola, soy Synoma 👋</h2>
-          <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando del menú o escribime abajo. Empezá por <b>📅 Mi semana</b> — en 2 minutos tenés tu plan.</p>
+          <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando del menú o escribime abajo.</p>
+          <p>Si es tu primera vez, empezá por <b>📐 Armar mi Fundación</b>: te hago 8 preguntas y de ahí sale todo lo demás. Si ya la tenés, andá directo a <b>📅 Mi semana</b>.</p>
+          <p class="nota-memoria">Todo lo que hablemos te queda guardado. Entrá con tu email desde donde quieras y seguimos donde lo dejamos.</p>
           <div data-video="comandos"></div>
           <div class="ancla" id="ancla-dash"></div>
         </div>
@@ -320,6 +343,7 @@ const VIDEOS = {
   manual:     '',   // paso 1              — qué pegar del Manual de Transformación
   oferta:     '',   // paso 2              — qué pegar de la Oferta en Una Página
   encuesta:   '',   // paso 3              — de dónde salen las frases de la encuesta
+  fundacion:  '',   // paso 4              — qué son los 8 bloques de la Fundación
   comandos:   '',   // dashboard           — recorrido por los comandos
 };
 
@@ -328,6 +352,7 @@ const VIDEO_LABELS = {
   manual:     'Qué tengo que pegar acá',
   oferta:     'Qué tengo que pegar acá',
   encuesta:   'De dónde saco estas frases',
+  fundacion:  'Qué son los 8 bloques',
   comandos:   'Recorrido por los comandos',
 };
 
@@ -400,8 +425,8 @@ const $ = id => document.getElementById(id);
 let EMAIL = '';        // solo durante el login
 let CLIENTE = null;    // { email, nombre } cuando hay sesión
 let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
-let HISTORY = [];
 let SENDING = false;
+let CHAT_CARGADO = false;   // para no volver a pedir el historial en cada entrada
 
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -597,17 +622,19 @@ async function abrirIdentidad(){
 
   const { res, datos } = await api('/api/perfil');
   if(res.ok && datos?.perfil){
-    $('f-manual').value   = datos.perfil.manual   || '';
-    $('f-oferta').value   = datos.perfil.oferta   || '';
-    $('f-encuesta').value = datos.perfil.encuesta || '';
+    $('f-manual').value    = datos.perfil.manual    || '';
+    $('f-oferta').value    = datos.perfil.oferta    || '';
+    $('f-encuesta').value  = datos.perfil.encuesta  || '';
+    $('f-fundacion').value = datos.perfil.fundacion || '';
   }
 }
 
 async function guardarIdentidad(){
   const cuerpo = {
-    manual:   $('f-manual').value.trim(),
-    oferta:   $('f-oferta').value.trim(),
-    encuesta: $('f-encuesta').value.trim(),
+    manual:    $('f-manual').value.trim(),
+    oferta:    $('f-oferta').value.trim(),
+    encuesta:  $('f-encuesta').value.trim(),
+    fundacion: $('f-fundacion').value.trim(),
   };
 
   if(!cuerpo.oferta){
@@ -638,14 +665,63 @@ async function guardarIdentidad(){
 function entrarDash(){
   $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
   show('view-dash');
+  cargarHistorial();
 }
 
 function volverAlLogin(mensaje){
   CLIENTE = null;
-  HISTORY = [];
+  CHAT_CARGADO = false;
   show('view-login');
   volverAEmail();
   if(mensaje) msgLogin(mensaje);
+}
+
+/* =============================================================================
+   El chat guardado
+   =============================================================================
+   La conversación vive en el servidor, colgada del email del cliente. Entra
+   desde el teléfono y sigue donde dejó en la computadora; le limpian el
+   navegador y no pierde nada. Antes el historial vivía solo en la memoria de la
+   pestaña: al cerrarla, Synoma se olvidaba de todo, lo que hacía la app un paso
+   ATRÁS respecto del Proyecto de ChatGPT que ya venían usando. */
+
+async function cargarHistorial(){
+  if(CHAT_CARGADO) return;
+  CHAT_CARGADO = true;
+
+  let datos = null;
+  try{ ({ datos } = await api('/api/chat')); }
+  catch(e){ return; }   // sin historial la app arranca en blanco y funciona igual
+
+  const mensajes = datos?.mensajes;
+  if(!Array.isArray(mensajes) || mensajes.length === 0) return;
+
+  for(const m of mensajes){
+    addMsg(m.role === 'user' ? 'user' : 'bot', m.content, m.role === 'user' ? null : 'Synoma');
+  }
+  scrollDown();
+}
+
+async function borrarHistorial(){
+  if(!confirm('¿Borrar toda tu conversación con Synoma?\n\nTu identidad y tu Fundación NO se borran: seguís teniendo todo cargado. Solo se borra el chat, y no se puede recuperar.')) return;
+
+  try{
+    const { res, datos } = await api('/api/chat', { method:'DELETE' });
+    if(!res.ok){
+      if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+      alert(datos?.message || 'No pudimos borrar el historial. Probá de nuevo.');
+      return;
+    }
+  }catch(e){
+    alert('Sin conexión. Revisá tu internet.');
+    return;
+  }
+
+  // Se limpia la pantalla recién cuando el servidor confirmó el borrado: si se
+  // limpiara antes, un fallo dejaría al cliente creyendo que borró algo que
+  // sigue guardado.
+  $('msgs').replaceChildren();
+  addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tu Fundación siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
 }
 
 /* =============================================================================
@@ -703,20 +779,20 @@ async function send(){
   $('send-btn').disabled = true;
   $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
   addMsg('user', text);
-  HISTORY.push({role:'user', content:text});
   $('typing').style.display='block';
 
   let body = null;   // burbuja de la respuesta; se crea al primer fragmento
   let acc = '';      // texto acumulado
 
   try{
-    // Ya no se manda ni el código ni el perfil: el servidor sabe quién es por la
-    // cookie y lee el perfil de la base. Antes, un navegador con el localStorage
-    // limpio mandaba un perfil vacío y Synoma escribía genérico en silencio.
+    // Se manda SOLO la pregunta nueva. Ni el código, ni el perfil, ni el
+    // historial: el servidor sabe quién es por la cookie y lee lo demás de la
+    // base. Antes iba todo desde el navegador, así que un localStorage limpio
+    // mandaba un perfil vacío y Synoma escribía genérico en silencio.
     const res = await fetch('/api/synoma', {
       method:'POST', credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ messages: HISTORY.slice(-12) }),
+      body: JSON.stringify({ mensaje: text }),
     });
 
     if(!res.ok){
@@ -752,7 +828,7 @@ async function send(){
       }
     }
 
-    if(acc) HISTORY.push({role:'assistant', content:acc});
+    // No hace falta guardar nada acá: el servidor ya persistió el turno.
   }catch(err){
     handleSendError(err, body, acc);
   }finally{
@@ -784,12 +860,13 @@ function handleSendError(err, body, acc){
   if(code === 'not_configured'){
     $('demo-pill').style.display='block';
     addMsg('bot', demoReply(), 'Ejemplo — motor sin conectar');
-    return;                              // no se guarda en HISTORY: no es contenido real
+    return;                              // el servidor tampoco lo guarda: no es contenido real
   }
 
   if(acc && body){
     // Respuesta cortada a mitad: se conserva lo que llegó y se marca el corte.
-    HISTORY.push({role:'assistant', content:acc});
+    // El servidor guarda ese mismo texto parcial, para que el historial y la
+    // pantalla digan lo mismo.
     body.appendChild(document.createElement('br'));
     body.appendChild(errorNote(message));
   } else {

@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 28 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 90 tests en verde.
 
 ---
 
@@ -310,26 +310,99 @@ base es byte-idéntico entre clientes distintos (si no, no cachea)`.
 
 ---
 
+## 🟢 9. El chat se perdía al cerrar la pestaña
+
+**El error.** Las tablas `conversaciones` y `mensajes` existían desde el esquema
+inicial, pero nadie escribía en ellas: el historial vivía solo en una variable de
+JavaScript. Cerrás la pestaña y Synoma se olvida de todo.
+
+Eso convertía la app en un **paso atrás** respecto del Proyecto de ChatGPT que
+los clientes ya venían usando, donde el hilo queda. Y rompía `/racha`, que está
+diseñado alrededor de "¿qué publicaste de lo que planificamos la semana pasada?".
+
+**El arreglo.** El historial vive en la base, colgado del cliente
+(`_conversacion.js`). Un hilo continuo por persona, igual que un Proyecto de
+ChatGPT — no pestañas de conversación, que sería pedirle que administre algo que
+hoy no administra.
+
+Tres consecuencias concretas:
+
+- Entra desde el teléfono y sigue la conversación que dejó en la computadora.
+- Safari le limpia el navegador y no pierde nada.
+- **El servidor deja de confiar en lo que manda el navegador.** Antes el
+  navegador enviaba el historial completo en cada pedido, así que cualquiera
+  podía inyectar turnos falsos de `assistant` y hacerle creer a Synoma que ya
+  había dicho algo que nunca dijo. Ahora el navegador manda solo la pregunta
+  nueva.
+
+```js
+// synoma.js — el historial se arma en el servidor
+const previos = await historial(cliente.id, MENSAJES_CONTEXTO);
+const trimmed = paraElModelo([...previos, { role: 'user', content: pregunta }]);
+```
+
+**El turno se guarda cuando la respuesta terminó**, no antes. Si se guardara la
+pregunta antes de llamar a Claude, cada llamada fallida dejaría un mensaje
+colgado sin respuesta y el pedido siguiente le mandaría al modelo un hilo lleno
+de preguntas sin contestar. Si la respuesta se cortó a la mitad se guarda igual
+lo que llegó: es lo que el cliente tiene en pantalla, y que el historial diga
+otra cosa lo confundiría.
+
+**Privacidad, que era el requisito.** Se guarda para el cliente, no para vos:
+
+| | |
+|---|---|
+| El cliente ve su chat | ✅ |
+| El cliente puede borrarlo entero, cuando quiera | ✅ botón **Borrar chat** |
+| Vos ves *cuántos* mensajes tuvo cada uno | ✅ en el panel |
+| Vos ves *qué* escribió | ❌ y no hay forma de construirlo sin tocar el código |
+| Se borra solo a los 90 días | ✅ `purga.js`, una vez por día |
+
+Hay un test que lee el esquema y falla si alguna vista de admin llega a tocar las
+tablas `mensajes` o `conversaciones`. No es una promesa: es una alarma.
+
+---
+
+## 🟢 10. La Fundación: los 8 bloques
+
+**Qué se sumó.** El prompt ahora conoce la estructura de fundación de contenido
+—porqué, objetivo, pilares, banco de historias, opiniones fuertes, a quién le
+hablás, su mundo interno, voz y posicionamiento— y cinco comandos nuevos para
+construirla: `/fundacion`, `/pilares`, `/persona`, `/hottakes`, `/banco`.
+
+**Dónde se guarda.** Un campo nuevo, `perfiles.fundacion`, con su propio tope
+(8.000 caracteres, más chico que el del Manual a propósito: son ocho bloques de
+pocas líneas, no un documento). Va **primero** en el bloque de perfil que se le
+manda al modelo, porque es lo que define pilares, persona y voz.
+
+**La regla que más cambia la salida:** si el cliente vende algo, su oferta es
+**un** pilar, no todos. Sin esa regla el modelo propone cinco pilares que son
+cinco formas de decir "comprá", y la cuenta queda como un folleto.
+
+**Costo.** `SYSTEM_BASE` creció de ~4.000 a ~6.500 caracteres. Es el prefijo
+cacheado, así que el primer mensaje de cada cliente después del deploy paga
+precio completo una vez y se recupera en el segundo. Las lecturas de caché
+cuestan el 10%.
+
+---
+
 ## Lo que NO se cambió, y por qué
-
-Estas son decisiones de producto, no arreglos técnicos. Cambiarlas sin
-consultarte sería pasarme de la raya.
-
-**Historial de conversaciones.** Sigue en memoria: un refresh y se pierde. Es
-una decisión con implicancias de privacidad (¿querés guardar las conversaciones
-de tus clientes en tu servidor?) y de producto (`/racha` está diseñado asumiendo
-historial). Necesita una base de datos, no un parche.
-
-**Códigos en variable de entorno.** Alta y baja de clientes sigue requiriendo
-editar `SYNOMA_CODES` y redeployar. Funciona hasta ~10-15 clientes. Resolverlo
-bien es un panel de admin con base de datos.
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
 la elección correcta. Solo cambiaría si querés respuestas más largas (subir
-`MAX_TOKENS`) o más calidad a más costo (Opus 5, a 5/25 USD por millón).
+`MAX_TOKENS`) o más calidad a más costo (Opus 5).
 
-**El prompt del sistema.** No le toqué ni una coma — está verificado byte por
-byte contra el original. Es el producto.
+**El prompt original.** Los 13 comandos y las 7 reglas originales están
+verbatim, verificados byte por byte. Lo de la Fundación se **sumó**; no se
+reescribió nada de lo que ya funcionaba.
+
+**Un solo hilo de conversación por cliente.** El modelo de datos soporta varios
+(cada conversación tiene su id), pero la app abre uno. Pestañas de conversación
+son más UI de la que este cliente necesita hoy.
+
+**El panel de administrador.** La vista `panel_clientes` está lista en la base y
+no tiene pantalla todavía. Va junto con el editor de prompt con versiones y
+rollback.
 
 ---
 
@@ -337,35 +410,44 @@ byte contra el original. Es el producto.
 
 **En Netlify → Site settings → Environment variables:**
 
-| Variable | Valor |
+| Variable | Para qué |
 |---|---|
 | `ANTHROPIC_API_KEY` | tu key de console.anthropic.com |
-| `SYNOMA_CODES` | `FND-ANA1,FND-LUZ2,FND-PAB3` |
-| `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por código por día. Default 60. |
-| `SYNOMA_ALLOWED_ORIGINS` | *(opcional)* solo si embebés la app en otro dominio. Dejalo vacío. |
+| `DATABASE_URL` | la URL de la base de Netlify DB. **Tiene que estar cargada como variable**, si no las migraciones no corren en el build y las tablas nunca se crean. |
+| `RESEND_API_KEY` | para que el código de acceso llegue por email. Sin esto el código sale por pantalla (modo desarrollo). |
+| `EMAIL_REMITENTE` | ej. `Synoma <hola@foundersbs.com>` con el dominio verificado en Resend |
+| `GHL_TOKEN` + `GHL_LOCATION_ID` | Private Integration de HighLevel, para verificar quién tiene acceso |
+| `GHL_ACTIVE_TAG` | *(opcional)* el tag que habilita. Default `synoma-activo`. |
+| `PRECIO_MENSUAL` / `MONEDA` | *(opcional)* default `59` / `USD` |
+| `RENOVACION_URL` | a dónde mandar a quien terminó el programa y quiere seguir |
+| `SYNOMA_DIAS_RETENCION` | *(opcional)* días que se guarda el chat. Default 90. |
+| `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. |
 
 **Deploy:**
 
 ```bash
 npm install
-npm test              # 28 tests, deberían pasar todos
-netlify deploy --prod
+npm test              # 90 tests, deberían pasar todos
+git push              # Netlify deploya solo
 ```
 
-**Habilitá Netlify Blobs** en el sitio (el tope diario y el respaldo del perfil lo
-usan). Si no está habilitado, ambos degradan sin romper: no hay tope y no hay
-respaldo, pero la app funciona.
+Las migraciones (`db/*.sql`) corren solas en cada build, en orden y una sola vez.
 
 **Probar antes de mostrárselo a un cliente:**
 
-1. Entrá con un código válido y tocá 📅 **Mi semana**. El texto tiene que
-   aparecer progresivamente. Si ves la pastilla de "modo demo", falta la API key.
-2. Entrá con un código inventado. Tiene que decir "Código inválido o vencido",
-   **no** mostrar contenido de ejemplo.
-3. Abrí `https://tu-sitio/README-DEPLOY.md`. Tiene que dar 404.
-4. Cargá tu identidad, borrá el localStorage del navegador y volvé a entrar con
-   el mismo código. Tiene que restaurar el perfil sin pedirte que pegues nada.
+1. Entrá con tu email. Tiene que llegarte el código de 6 dígitos **al mail**. Si
+   aparece en pantalla, falta `RESEND_API_KEY`.
+2. Tocá 📅 **Mi semana**. El texto tiene que aparecer progresivamente. Si ves la
+   pastilla de "modo demo", falta la API key.
+3. **Cerrá la pestaña, volvé a abrir y entrá.** Tiene que estar tu conversación
+   completa. Esto es lo nuevo — si no está, algo falló en las migraciones.
+4. Entrá desde el celular con el mismo email. Misma conversación.
+5. Escribí `/fundacion`. Tiene que hacerte **una** pregunta, no las ocho juntas.
+6. Tocá **Borrar chat**, confirmá, recargá. Tiene que estar vacío, y tu
+   identidad y tu Fundación intactas.
+7. Probá con un email que no tenga el tag en GHL. Tiene que ofrecer la
+   suscripción, **no** un error.
 
-**Y algo que no es código:** si el proveedor te pasó la key de Anthropic por chat
-o mail, rotala. Cualquier secreto que viajó por un canal no seguro hay que darlo
-por comprometido.
+**Y algo que no es código:** si la key de Anthropic viajó alguna vez por chat o
+mail, rotala. Cualquier secreto que pasó por un canal no seguro hay que darlo por
+comprometido.

@@ -12,6 +12,11 @@
 // pedido, así que un navegador con el localStorage limpio enviaba un perfil
 // vacío y Synoma escribía genérico sin que nadie se enterara.
 //
+// El historial de la charla también sale de la base (_conversacion.js). El
+// navegador manda solo la pregunta nueva. Así el cliente sigue su conversación
+// desde cualquier dispositivo, y nadie puede inyectar turnos falsos de
+// "assistant" en el pedido para hacerle decir a Synoma lo que no dijo.
+//
 // Variables de entorno:
 //   ANTHROPIC_API_KEY       (requerida)  sk-ant-...
 //   SYNOMA_DAILY_LIMIT      (opcional)   mensajes por cliente por día. Default 60.
@@ -23,10 +28,10 @@ import { clienteDeSesion } from './_auth.js';
 import { urlDeBase } from './_db.js';
 import { configPublica } from './_config.js';
 import { leerPerfil, bloqueDePerfil, mensajesDeHoy, registrarUso } from './_perfil.js';
+import { historial, paraElModelo, guardarTurno, MENSAJES_CONTEXTO } from './_conversacion.js';
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 2500;
-const HISTORY_TURNS = 12;
 const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
 
@@ -77,8 +82,11 @@ export default async (req) => {
     return fail(400, 'bad_json', 'El cuerpo de la petición no es JSON válido.', cors);
   }
 
-  const messages = payload?.messages;
-  if (!Array.isArray(messages) || messages.length === 0) {
+  // Del navegador llega SOLO la pregunta nueva. El historial lo pone el servidor
+  // desde la base: si viniera del cliente, cualquiera podría inventar turnos de
+  // "assistant" y hacerle creer a Synoma que ya dijo algo que nunca dijo.
+  const pregunta = extraerPregunta(payload);
+  if (!pregunta) {
     return fail(400, 'no_messages', 'No llegó ningún mensaje.', cors);
   }
 
@@ -118,10 +126,18 @@ export default async (req) => {
     { type: 'text', text: bloqueDePerfil(perfil), cache_control: { type: 'ephemeral' } },
   ];
 
-  const trimmed = messages.slice(-HISTORY_TURNS).map((m) => ({
-    role: m.role === 'assistant' ? 'assistant' : 'user',
-    content: String(m.content ?? '').slice(0, MAX_CHARS_MENSAJE),
-  }));
+  // --- Su memoria ----------------------------------------------------------
+  // Sale de la base, no del navegador. Si la consulta falla se sigue adelante
+  // sin historial: perder el contexto de la charla es molesto, quedarse sin
+  // responder es peor.
+  let previos = [];
+  try {
+    previos = await historial(cliente.id, MENSAJES_CONTEXTO);
+  } catch (e) {
+    console.warn('[synoma] no se pudo leer el historial:', e?.message ?? e);
+  }
+
+  const trimmed = paraElModelo([...previos, { role: 'user', content: pregunta }]);
 
   // --- Llamada a Claude, con streaming y reintentos ------------------------
   let upstream;
@@ -135,7 +151,7 @@ export default async (req) => {
 
   // A partir de acá el stream ya arrancó: los errores se emiten DENTRO del
   // stream, porque los headers HTTP ya salieron.
-  return new Response(toNdjson(upstream.body, cliente), {
+  return new Response(toNdjson(upstream.body, cliente, pregunta), {
     status: 200,
     headers: {
       ...cors,
@@ -199,7 +215,7 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
 //   {"type":"text","text":"..."}                    fragmento de texto
 //   {"type":"done","usage":{...}}                   terminó bien
 //   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
-function toNdjson(body, cliente) {
+function toNdjson(body, cliente, pregunta) {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
 
@@ -210,6 +226,17 @@ function toNdjson(body, cliente) {
       let buffer = '';
       let usage = null;
       let emittedText = false;
+      let respuesta = '';
+
+      // Guardar el turno pasa DESPUÉS de cerrar el stream y sin await: el
+      // cliente ya tiene su respuesta completa en pantalla, y una base lenta no
+      // tiene por qué hacerle esperar. Si falla, se pierde una entrada del
+      // historial y queda en el log; no se pierde la respuesta.
+      const persistir = () => {
+        if (!respuesta.trim()) return;
+        guardarTurno(cliente.id, pregunta, respuesta).catch((e) =>
+          console.error('[synoma] no se pudo guardar el turno:', e?.message ?? e));
+      };
 
       try {
         while (true) {
@@ -230,6 +257,7 @@ function toNdjson(body, cliente) {
 
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
               emittedText = true;
+              respuesta += ev.delta.text;
               emit({ type: 'text', text: ev.delta.text });
             } else if (ev.type === 'message_start' && ev.message?.usage) {
               usage = { ...(usage ?? {}), ...ev.message.usage };
@@ -243,6 +271,9 @@ function toNdjson(body, cliente) {
                 error: 'stream_error',
                 message: 'El motor se cortó a mitad de la respuesta. Probá de nuevo.',
               });
+              // Se guarda lo que alcanzó a llegar: es lo que el cliente tiene en
+              // pantalla, y que el historial diga otra cosa lo confundiría.
+              persistir();
               controller.close();
               return;
             }
@@ -263,6 +294,7 @@ function toNdjson(body, cliente) {
               console.error('[synoma] no se pudo registrar el uso:', e?.message ?? e));
           }
           emit({ type: 'done', usage });
+          persistir();
         }
       } catch (e) {
         console.error('[synoma] stream interrumpido:', e?.message ?? e);
@@ -271,6 +303,7 @@ function toNdjson(body, cliente) {
           error: 'stream_aborted',
           message: 'Se cortó la conexión con el motor. Probá de nuevo.',
         });
+        persistir();
       } finally {
         controller.close();
       }
@@ -314,6 +347,23 @@ function parseOrigins(raw) {
     .split(',')
     .map((o) => o.trim().replace(/\/$/, ''))
     .filter(Boolean);
+}
+
+// El navegador manda { mensaje: "..." }. Se acepta también el formato viejo
+// { messages: [...] } porque una pestaña abierta desde antes del deploy sigue
+// mandando eso, y no hay motivo para romperle la sesión: se toma la última
+// pregunta del cliente y el resto se descarta (el historial real está en la base).
+function extraerPregunta(payload) {
+  const directo = String(payload?.mensaje ?? '').slice(0, MAX_CHARS_MENSAJE).trim();
+  if (directo) return directo;
+
+  const lista = Array.isArray(payload?.messages) ? payload.messages : [];
+  for (let i = lista.length - 1; i >= 0; i--) {
+    if (lista[i]?.role === 'assistant') continue;
+    const texto = String(lista[i]?.content ?? '').slice(0, MAX_CHARS_MENSAJE).trim();
+    if (texto) return texto;
+  }
+  return '';
 }
 
 function fail(status, error, message, cors, extra = {}) {

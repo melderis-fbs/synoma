@@ -10,14 +10,17 @@
 import { getSql } from './_db.js';
 
 // Mismos topes que la v1: son el presupuesto de tokens del prompt.
-export const LIMITES_PERFIL = { manual: 30000, oferta: 15000, encuesta: 10000 };
+// fundacion es más chica a propósito: son ocho bloques de pocas líneas cada uno,
+// no un documento. Si alguien pega ahí su Manual entero, el prompt se infla y el
+// modelo pierde el foco en lo que importa.
+export const LIMITES_PERFIL = { manual: 30000, oferta: 15000, encuesta: 10000, fundacion: 8000 };
 
 const recortar = (v, max) => String(v ?? '').trim().slice(0, max);
 
 export async function leerPerfil(clienteId) {
   const sql = getSql();
   const rows = await sql`
-    SELECT manual, oferta, encuesta, actualizado_en
+    SELECT manual, oferta, encuesta, fundacion, actualizado_en
     FROM perfiles WHERE cliente_id = ${clienteId}
   `;
   return rows[0] ?? null;
@@ -29,6 +32,7 @@ export async function guardarPerfil(clienteId, entrada) {
     manual: recortar(entrada?.manual, LIMITES_PERFIL.manual),
     oferta: recortar(entrada?.oferta, LIMITES_PERFIL.oferta),
     encuesta: recortar(entrada?.encuesta, LIMITES_PERFIL.encuesta),
+    fundacion: recortar(entrada?.fundacion, LIMITES_PERFIL.fundacion),
   };
 
   // Se rechaza un perfil sin oferta: sin ella Synoma escribe genérico, que es
@@ -37,12 +41,13 @@ export async function guardarPerfil(clienteId, entrada) {
   if (!perfil.oferta) return { ok: false, motivo: 'sin_oferta' };
 
   const rows = await sql`
-    INSERT INTO perfiles (cliente_id, manual, oferta, encuesta)
-    VALUES (${clienteId}, ${perfil.manual}, ${perfil.oferta}, ${perfil.encuesta})
+    INSERT INTO perfiles (cliente_id, manual, oferta, encuesta, fundacion)
+    VALUES (${clienteId}, ${perfil.manual}, ${perfil.oferta}, ${perfil.encuesta}, ${perfil.fundacion})
     ON CONFLICT (cliente_id) DO UPDATE SET
       manual         = EXCLUDED.manual,
       oferta         = EXCLUDED.oferta,
       encuesta       = EXCLUDED.encuesta,
+      fundacion      = EXCLUDED.fundacion,
       actualizado_en = now()
     RETURNING actualizado_en
   `;
@@ -60,6 +65,11 @@ export function bloqueDePerfil(p) {
   };
   return [
     '=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===',
+    // Primero la Fundación: es el bloque que define pilares, persona y voz, o
+    // sea el que decide si la pieza sale suya o genérica. Va arriba para que sea
+    // lo primero que el modelo tiene presente al planificar.
+    '--- SU FUNDACIÓN (los 8 bloques) ---',
+    parte(p?.fundacion, '(no cargada — si te hace falta un bloque, pedíselo, y ofrecele el comando /fundacion)'),
     '--- SU MANUAL DE TRANSFORMACIÓN ---',
     parte(p?.manual, '(no cargado — pedile que lo cargue en "Mi identidad")'),
     '--- SU OFERTA EN UNA PÁGINA ---',
