@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 90 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 132 tests en verde.
 
 ---
 
@@ -386,6 +386,74 @@ cuestan el 10%.
 
 ---
 
+## 🟢 11. El contenido creado se perdía dentro del chat
+
+**El problema.** Synoma genera un guion buenísimo, el cliente lo lee, sigue
+trabajando, y a los tres días no lo encuentra. Tiene que volver a pedirlo — y
+sale distinto, porque el modelo no es determinista. Guardar la conversación
+(punto 9) no alcanza: buscar una pieza dentro de 200 mensajes no es una
+biblioteca, es un cajón.
+
+**El arreglo.** Una pantalla nueva, **Mis contenidos**, con una grilla donde cada
+pieza es una fila propia (tabla `piezas`).
+
+**Se guardan solas.** El cliente no tiene que apretar nada — que es la parte que
+importa, porque el motivo por el que quiere la grilla es justamente que se le
+pierden las cosas. Los nueve comandos que producen algo publicable
+(`/semana`, `/idea`, `/guion`, `/gancho`, `/historias`, `/venta`, `/post`,
+`/repurpose`, `/revisar`) van a la biblioteca con su tipo puesto.
+
+Lo que **no** se guarda solo: `/fundacion`, `/pilares`, `/persona`, `/hottakes`,
+`/banco` (eso es identidad y ya tiene su lugar en el perfil) y `/racha` (es un
+repaso, no una pieza). Cualquier otra respuesta se puede guardar a mano con un
+botón en la burbuja.
+
+**El título.** Sale del argumento del comando cuando lo hay —`/guion cómo elegir
+un nutricionista` ya dice qué es la pieza— y si no, de la primera línea con texto
+de la respuesta, sin los asteriscos del markdown. Sin ese filtro la mitad de los
+títulos serían `---`.
+
+**El estado es lo que la vuelve útil.** Cada pieza pasa por
+**Sin grabar → Grabada → Publicada**, con un botón por paso. Sin eso la grilla es
+un archivo muerto: el cliente no distingue lo que ya publicó de lo que le falta
+grabar. También se puede archivar (sale de la vista) o borrar.
+
+**Y con eso `/racha` empieza a funcionar de verdad.** Antes preguntaba "¿qué
+publicaste de lo que planificamos?" sin tener con qué contestar, así que le
+preguntaba al cliente lo que el sistema ya podía saber. Ahora, **solo cuando el
+mensaje es `/racha`**, se le manda al modelo un tercer bloque con el listado: qué
+produjo, qué publicó, qué quedó sin grabar y en qué fecha.
+
+```js
+// synoma.js — el bloque se paga solo en /racha, no en cada mensaje
+if (/^\/racha\b/i.test(pregunta)) {
+  system.push({ type: 'text', text: bloqueDeRacha(await resumenParaRacha(cliente.id)) });
+}
+```
+
+Ese bloque lleva **títulos y estados, nunca el contenido** de las piezas: mandar
+el texto completo de 20 piezas costaría más que la respuesta entera. Y si la
+biblioteca está vacía se lo dice explícitamente, con la instrucción de no
+inventar un repaso.
+
+**Dos diferencias con el chat, a propósito:**
+
+| | Chat | Biblioteca |
+|---|---|---|
+| Se borra a los 90 días | sí | **no** |
+| Por qué | es andamiaje, se puede tirar | es el activo del cliente |
+
+Las piezas se borran solo si el cliente las borra. Hay un test que lee
+`purga.js` y falla si alguna vez llega a tocar la tabla `piezas`.
+
+**Lo que vos ves en el panel:** dos números nuevos —cuántas piezas produjo y
+cuántas publicó— y la fecha de la última. Es la métrica de adopción que importa,
+porque un cliente que genera y no publica necesita otra conversación que uno que
+no genera. Nunca un título ni un contenido: el test del esquema también cubre
+esto.
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -427,7 +495,7 @@ rollback.
 
 ```bash
 npm install
-npm test              # 90 tests, deberían pasar todos
+npm test              # 132 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 
@@ -445,7 +513,12 @@ Las migraciones (`db/*.sql`) corren solas en cada build, en orden y una sola vez
 5. Escribí `/fundacion`. Tiene que hacerte **una** pregunta, no las ocho juntas.
 6. Tocá **Borrar chat**, confirmá, recargá. Tiene que estar vacío, y tu
    identidad y tu Fundación intactas.
-7. Probá con un email que no tenga el tag en GHL. Tiene que ofrecer la
+7. Pedile un 🎬 **guion**. Abajo de la respuesta tiene que decir "Guardado en Mis
+   contenidos". Entrá a **Mis contenidos**: tiene que estar ahí. Tocá
+   **Ya la grabé** y después **Ya la publiqué**.
+8. Escribí `/racha`. Tiene que nombrarte esa pieza y su estado, no preguntarte
+   de cero qué hiciste.
+9. Probá con un email que no tenga el tag en GHL. Tiene que ofrecer la
    suscripción, **no** un error.
 
 **Y algo que no es código:** si la key de Anthropic viajó alguna vez por chat o

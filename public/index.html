@@ -108,6 +108,44 @@
   .typing{color:var(--muted);font-size:13px;padding:0 36px 10px;display:none;background:var(--paper)}
   .demo-pill{position:fixed;bottom:14px;right:16px;background:#FFF7E8;border:1px solid #EAD9B0;
     color:#A8946F;font-size:11px;font-weight:700;padding:6px 12px;border-radius:99px;display:none;letter-spacing:.06em}
+  /* ---------- BIBLIOTECA ---------- */
+  #view-biblioteca .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px}
+  #view-biblioteca h2{font-size:32px;font-weight:800;letter-spacing:-.02em;color:var(--black);margin:8px 0 8px}
+  #view-biblioteca .sub{color:var(--muted);font-size:14.5px;line-height:1.6;max-width:620px}
+  .filtros{display:flex;gap:8px;flex-wrap:wrap;margin:26px 0 4px}
+  .chip{background:var(--bg);border:1px solid var(--border);border-radius:99px;padding:8px 16px;font-size:12.5px;
+    font-weight:700;color:var(--muted);cursor:pointer;font-family:'Inter',sans-serif;transition:all .12s}
+  .chip:hover{border-color:var(--beige)}
+  .chip.on{background:var(--black);border-color:var(--black);color:#fff}
+  .grilla{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px;margin-top:22px}
+  .pieza{background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:18px;display:flex;
+    flex-direction:column;gap:10px}
+  .pieza-cab{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .pieza-tipo{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:800;color:var(--beige-d)}
+  .pieza-fecha{font-size:11px;color:var(--soft);white-space:nowrap}
+  .pieza h3{font-size:15px;font-weight:700;color:var(--black);line-height:1.4}
+  /* El contenido arranca plegado: con 60 piezas abiertas la grilla es ilegible. */
+  .pieza-cuerpo{font-size:13px;line-height:1.6;color:var(--muted);max-height:0;overflow:hidden;
+    transition:max-height .2s;white-space:pre-wrap}
+  .pieza.abierta .pieza-cuerpo{max-height:420px;overflow-y:auto;border-top:1px solid var(--border2);padding-top:10px}
+  .pieza-pie{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+  .mini{background:var(--paper);border:1px solid var(--border2);border-radius:8px;padding:5px 10px;font-size:11.5px;
+    font-weight:700;color:var(--muted);cursor:pointer;font-family:'Inter',sans-serif}
+  .mini:hover{border-color:var(--beige);color:var(--ink)}
+  .mini.peligro:hover{border-color:#e25950;color:#e25950}
+  .estado{font-size:10px;letter-spacing:.16em;text-transform:uppercase;font-weight:800;border-radius:99px;padding:4px 10px}
+  .estado.nueva{background:#FFF7E8;color:#A8946F}
+  .estado.grabada{background:#EEF3FF;color:#5B76B7}
+  .estado.publicada{background:#EAF6EE;color:#3E8C5C}
+  .estado.archivada{background:var(--cream);color:var(--soft)}
+  .vacio{text-align:center;color:var(--muted);padding:70px 20px;font-size:14.5px;line-height:1.7}
+  /* Aviso bajo la burbuja: "esto quedó guardado". Sin esto el cliente no sabe
+     que la biblioteca existe hasta que alguien se lo cuenta. */
+  .guardada-nota{font-size:11.5px;color:var(--beige-d);font-weight:600;margin-top:10px;display:flex;
+    align-items:center;gap:8px;flex-wrap:wrap}
+  .guardada-nota button{background:none;border:none;color:var(--beige-d);font-weight:700;font-size:11.5px;
+    cursor:pointer;text-decoration:underline;font-family:'Inter',sans-serif;padding:0}
+
   /* ---------- video explicativo ---------- */
   .vid{margin:14px 0 0;border-radius:12px;overflow:hidden;border:1px solid var(--border);background:var(--black)}
   .vid-facade{position:relative;width:100%;aspect-ratio:16/9;display:flex;flex-direction:column;
@@ -152,7 +190,11 @@
   .btn:disabled{opacity:.45;cursor:default}
   @media(max-width:760px){
     .nav{padding:0 18px}
-    .nav .menu{gap:14px}
+    /* Con cinco entradas en el menú el nombre del cliente ya no entra en un
+       teléfono. Se esconde: la persona sabe quién es. */
+    .nav .menu{gap:12px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+    .nav .menu .who{display:none}
+    .nav .menu button{font-size:10px;letter-spacing:.1em;white-space:nowrap}
     #view-login h1{font-size:34px}
     #view-login .hero{padding:44px 20px 32px}
     #view-setup h2{font-size:27px}
@@ -167,6 +209,9 @@
     .msgs{padding:20px 16px}
     .msg{max-width:100%}
     .composer{padding:12px 14px}
+    #view-biblioteca h2{font-size:26px}
+    #view-biblioteca .wrap{padding:28px 16px 60px}
+    .grilla{grid-template-columns:1fr;gap:12px}
   }
 </style>
 </head>
@@ -276,6 +321,7 @@
     <div class="word">SYN<span>O</span>MA</div>
     <div class="menu">
       <span class="who" id="who"></span>
+      <button onclick="abrirBiblioteca()">Mis contenidos</button>
       <button onclick="abrirIdentidad()">Mi identidad</button>
       <button onclick="borrarHistorial()">Borrar chat</button>
       <button onclick="salir()">Salir</button>
@@ -324,6 +370,26 @@
         <button class="btn" id="send-btn" onclick="send()">Enviar</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ============ BIBLIOTECA ============ -->
+<div class="view" id="view-biblioteca">
+  <div class="nav">
+    <div class="word">SYN<span>O</span>MA</div>
+    <div class="menu">
+      <button onclick="volverAlChat()">← Volver al chat</button>
+      <button onclick="salir()">Salir</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <span class="kicker">Tu biblioteca</span>
+    <h2>Mis contenidos</h2>
+    <p class="sub">Todo lo que fuimos creando queda acá. Marcá cada pieza cuando la grabes y cuando la publiques — con eso <b>/racha</b> te puede hacer un repaso real de tu semana en vez de preguntarte de nuevo qué hiciste.</p>
+
+    <div class="filtros" id="filtros"></div>
+    <div class="grilla" id="grilla"></div>
+    <div class="vacio" id="biblioteca-vacia" hidden></div>
   </div>
 </div>
 
@@ -725,6 +791,257 @@ async function borrarHistorial(){
 }
 
 /* =============================================================================
+   Biblioteca de contenidos
+   =============================================================================
+   Synoma genera un guion buenísimo, el cliente lo lee, sigue trabajando y a los
+   tres días no lo encuentra. El chat guarda la conversación, pero buscar una
+   pieza entre 200 mensajes no es una biblioteca: es un cajón. Acá cada pieza es
+   una fila propia, con un estado que la convierte en un tablero de producción. */
+
+let PIEZAS = [];
+let ETIQUETAS = {};
+let FILTRO = 'todas';
+
+const ORDEN_ESTADO = { nueva: 'grabada', grabada: 'publicada' };
+const NOMBRE_ESTADO = { nueva: 'Sin grabar', grabada: 'Grabada', publicada: 'Publicada', archivada: 'Archivada' };
+
+async function abrirBiblioteca(){
+  show('view-biblioteca');
+  $('grilla').replaceChildren();
+  $('biblioteca-vacia').hidden = false;
+  $('biblioteca-vacia').textContent = 'Abriendo tu biblioteca…';
+
+  let res, datos;
+  try{ ({ res, datos } = await api('/api/biblioteca')); }
+  catch(e){ $('biblioteca-vacia').textContent = '⚠️ Sin conexión. Revisá tu internet.'; return; }
+
+  if(!res.ok){
+    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+    $('biblioteca-vacia').textContent = '⚠️ ' + (datos?.message || 'No pudimos abrir tu biblioteca.');
+    return;
+  }
+
+  PIEZAS = datos.piezas || [];
+  ETIQUETAS = datos.etiquetas || {};
+  pintarFiltros();
+  pintarGrilla();
+}
+
+function volverAlChat(){ show('view-dash'); }
+
+// Un chip por estado con la cuenta al lado, más los tipos que el cliente
+// realmente tiene. Mostrar filtros de tipos vacíos sería ruido.
+function pintarFiltros(){
+  const cont = $('filtros');
+  cont.replaceChildren();
+
+  const cuenta = (fn) => PIEZAS.filter(fn).length;
+  const opciones = [
+    ['todas', `Todas (${PIEZAS.length})`],
+    ['nueva', `Sin grabar (${cuenta(p=>p.estado==='nueva')})`],
+    ['grabada', `Grabadas (${cuenta(p=>p.estado==='grabada')})`],
+    ['publicada', `Publicadas (${cuenta(p=>p.estado==='publicada')})`],
+  ];
+  if(cuenta(p=>p.estado==='archivada')) opciones.push(['archivada', `Archivadas (${cuenta(p=>p.estado==='archivada')})`]);
+
+  for(const [valor, texto] of opciones){
+    const b = document.createElement('button');
+    b.className = 'chip' + (FILTRO === valor ? ' on' : '');
+    b.textContent = texto;
+    b.onclick = () => { FILTRO = valor; pintarFiltros(); pintarGrilla(); };
+    cont.appendChild(b);
+  }
+}
+
+function pintarGrilla(){
+  const grilla = $('grilla');
+  grilla.replaceChildren();
+
+  // Las archivadas no aparecen en "Todas": archivar es sacarlas de la vista.
+  const lista = FILTRO === 'todas'
+    ? PIEZAS.filter(p => p.estado !== 'archivada')
+    : PIEZAS.filter(p => p.estado === FILTRO);
+
+  const vacia = $('biblioteca-vacia');
+  if(lista.length === 0){
+    vacia.hidden = false;
+    vacia.textContent = PIEZAS.length === 0
+      ? 'Todavía no hay nada acá. Volvé al chat y pedile un 📅 plan semanal o un 🎬 guion — se guardan solos.'
+      : 'No hay piezas en este filtro.';
+    return;
+  }
+  vacia.hidden = true;
+
+  for(const p of lista) grilla.appendChild(tarjetaDePieza(p));
+}
+
+function tarjetaDePieza(p){
+  const card = document.createElement('div');
+  card.className = 'pieza';
+
+  const cab = document.createElement('div');
+  cab.className = 'pieza-cab';
+  const tipo = document.createElement('span');
+  tipo.className = 'pieza-tipo';
+  tipo.textContent = ETIQUETAS[p.tipo] || p.tipo;
+  const fecha = document.createElement('span');
+  fecha.className = 'pieza-fecha';
+  fecha.textContent = fechaCorta(p.creado_en);
+  cab.append(tipo, fecha);
+
+  const h = document.createElement('h3');
+  h.textContent = p.titulo || (ETIQUETAS[p.tipo] || 'Contenido');
+
+  // textContent y no innerHTML: el contenido lo escribió un modelo y podría
+  // traer algo que parezca HTML. Nada de lo que llegue acá se interpreta.
+  const cuerpo = document.createElement('div');
+  cuerpo.className = 'pieza-cuerpo';
+  cuerpo.textContent = p.contenido || '';
+
+  const pie = document.createElement('div');
+  pie.className = 'pieza-pie';
+
+  const est = document.createElement('span');
+  est.className = 'estado ' + p.estado;
+  est.textContent = NOMBRE_ESTADO[p.estado] || p.estado;
+  pie.appendChild(est);
+
+  const ver = mini(card.classList.contains('abierta') ? 'Ocultar' : 'Ver', () => {
+    card.classList.toggle('abierta');
+    ver.textContent = card.classList.contains('abierta') ? 'Ocultar' : 'Ver';
+  });
+  pie.appendChild(ver);
+
+  pie.appendChild(mini('Copiar', (b) => copiar(p.contenido, b)));
+
+  const siguiente = ORDEN_ESTADO[p.estado];
+  if(siguiente){
+    pie.appendChild(mini(siguiente === 'grabada' ? 'Ya la grabé' : 'Ya la publiqué',
+      () => avanzarEstado(p.id, siguiente)));
+  }
+
+  if(p.estado === 'archivada'){
+    pie.appendChild(mini('Restaurar', () => avanzarEstado(p.id, 'nueva')));
+  } else {
+    pie.appendChild(mini('Archivar', () => avanzarEstado(p.id, 'archivada')));
+  }
+
+  const borrar = mini('Borrar', () => borrarPiezaUI(p));
+  borrar.classList.add('peligro');
+  pie.appendChild(borrar);
+
+  card.append(cab, h, cuerpo, pie);
+  return card;
+}
+
+function mini(texto, alTocar){
+  const b = document.createElement('button');
+  b.className = 'mini';
+  b.textContent = texto;
+  b.onclick = () => alTocar(b);
+  return b;
+}
+
+function fechaCorta(iso){
+  try{
+    return new Date(iso).toLocaleDateString('es-AR', { day:'numeric', month:'short' });
+  }catch(e){ return ''; }
+}
+
+async function copiar(texto, boton){
+  try{
+    await navigator.clipboard.writeText(texto || '');
+    const antes = boton.textContent;
+    boton.textContent = '¡Copiado!';
+    setTimeout(()=>{ boton.textContent = antes; }, 1400);
+  }catch(e){
+    boton.textContent = 'No se pudo';
+  }
+}
+
+async function avanzarEstado(id, estado){
+  const { res, datos } = await api('/api/biblioteca', {
+    method:'PATCH', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ id, estado }),
+  });
+  if(!res.ok){
+    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+    alert(datos?.message || 'No pudimos actualizarla.');
+    return;
+  }
+  // Se actualiza en memoria con lo que confirmó el servidor, no con lo que
+  // supusimos: si el estado se guardó distinto, la pantalla lo refleja.
+  const pieza = PIEZAS.find(p => p.id === id);
+  if(pieza){ pieza.estado = datos.pieza.estado; pieza.publicado_en = datos.pieza.publicado_en; }
+  pintarFiltros();
+  pintarGrilla();
+}
+
+async function borrarPiezaUI(p){
+  if(!confirm(`¿Borrar "${p.titulo || 'esta pieza'}"?\n\nNo se puede recuperar. Si solo querés sacarla de la vista, usá Archivar.`)) return;
+
+  const { res, datos } = await api('/api/biblioteca?id=' + encodeURIComponent(p.id), { method:'DELETE' });
+  if(!res.ok){
+    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+    alert(datos?.message || 'No pudimos borrarla.');
+    return;
+  }
+  PIEZAS = PIEZAS.filter(x => x.id !== p.id);
+  pintarFiltros();
+  pintarGrilla();
+}
+
+// Aviso bajo la burbuja cuando el servidor confirmó que la pieza quedó guardada.
+// Solo se muestra si el guardado ocurrió de verdad: prometer "guardado" y que no
+// esté es peor que no avisar nada.
+function notaGuardada(pieza){
+  const n = document.createElement('div');
+  n.className = 'guardada-nota';
+  const t = document.createElement('span');
+  t.textContent = '📚 Guardado en Mis contenidos';
+  const b = document.createElement('button');
+  b.textContent = 'Ver mi biblioteca';
+  b.onclick = () => abrirBiblioteca();
+  n.append(t, b);
+  return n;
+}
+
+// El caso contrario: la respuesta no vino de un comando de contenido, así que no
+// se guardó sola. Se le ofrece el botón en vez de decidir por él.
+function botonGuardar(texto){
+  const w = document.createElement('div');
+  w.className = 'guardada-nota';
+  const b = document.createElement('button');
+  b.textContent = '📚 Guardar en Mis contenidos';
+  b.onclick = () => guardarAMano(texto, b);
+  w.appendChild(b);
+  return w;
+}
+
+// Para las respuestas que NO vienen de un comando: el cliente le pidió algo
+// escribiendo y le gustó cómo salió.
+async function guardarAMano(texto, boton){
+  boton.disabled = true;
+  boton.textContent = 'Guardando…';
+  try{
+    const { res, datos } = await api('/api/biblioteca', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ contenido: texto, tipo:'otro' }),
+    });
+    if(!res.ok){
+      if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
+      boton.textContent = 'No se pudo';
+      boton.disabled = false;
+      return;
+    }
+    boton.replaceWith(notaGuardada());
+  }catch(e){
+    boton.textContent = 'Sin conexión';
+    boton.disabled = false;
+  }
+}
+
+/* =============================================================================
    Mensajes
    ============================================================================= */
 
@@ -822,6 +1139,13 @@ async function send(){
           acc += ev.text;
           body.innerHTML = renderLite(acc);
           scrollDown();
+        } else if(ev.type === 'done'){
+          // El servidor confirma si la pieza quedó guardada. Si no vino de un
+          // comando de contenido, se ofrece el botón para guardarla a mano.
+          if(body && acc){
+            body.parentNode.appendChild(ev.pieza ? notaGuardada() : botonGuardar(acc));
+            scrollDown();
+          }
         } else if(ev.type === 'error'){
           throw { code: ev.error, message: ev.message };
         }

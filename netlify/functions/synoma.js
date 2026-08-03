@@ -29,6 +29,7 @@ import { urlDeBase } from './_db.js';
 import { configPublica } from './_config.js';
 import { leerPerfil, bloqueDePerfil, mensajesDeHoy, registrarUso } from './_perfil.js';
 import { historial, paraElModelo, guardarTurno, MENSAJES_CONTEXTO } from './_conversacion.js';
+import { guardarSiEsPieza, resumenParaRacha, bloqueDeRacha } from './_biblioteca.js';
 
 const MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 2500;
@@ -125,6 +126,19 @@ export default async (req) => {
     { type: 'text', text: SYSTEM_BASE, cache_control: { type: 'ephemeral' } },
     { type: 'text', text: bloqueDePerfil(perfil), cache_control: { type: 'ephemeral' } },
   ];
+
+  // Bloque 3, SOLO para /racha: el listado de su biblioteca con los estados.
+  // /racha pregunta "¿qué publicaste de lo que planificamos?" y sin este dato el
+  // modelo no tiene con qué contestar: pregunta de nuevo lo que ya está anotado.
+  // Va sin cache_control y solo en este comando, para no pagar estos tokens en
+  // cada mensaje.
+  if (/^\/racha\b/i.test(pregunta)) {
+    try {
+      system.push({ type: 'text', text: bloqueDeRacha(await resumenParaRacha(cliente.id)) });
+    } catch (e) {
+      console.warn('[synoma] no se pudo leer la biblioteca para /racha:', e?.message ?? e);
+    }
+  }
 
   // --- Su memoria ----------------------------------------------------------
   // Sale de la base, no del navegador. Si la consulta falla se sigue adelante
@@ -293,7 +307,17 @@ function toNdjson(body, cliente, pregunta) {
             registrarUso(cliente.id, usage).catch((e) =>
               console.error('[synoma] no se pudo registrar el uso:', e?.message ?? e));
           }
-          emit({ type: 'done', usage });
+          // La pieza SÍ se espera antes de avisar "done": el front muestra
+          // "guardado en tu biblioteca" y esa frase tiene que ser verdad. Es un
+          // INSERT y el texto ya salió completo, así que no demora nada visible.
+          let pieza = null;
+          try {
+            pieza = await guardarSiEsPieza(cliente.id, pregunta, respuesta);
+          } catch (e) {
+            console.error('[synoma] no se pudo guardar la pieza:', e?.message ?? e);
+          }
+
+          emit({ type: 'done', usage, pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null });
           persistir();
         }
       } catch (e) {

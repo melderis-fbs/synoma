@@ -8,7 +8,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { usarSqlDePrueba } from '../netlify/functions/_db.js';
 import {
   paraElModelo, historial, guardarTurno, borrarChat,
@@ -190,13 +190,18 @@ test('el cliente puede borrar su chat, y solo el suyo', async () => {
 test('ninguna vista de admin expone el contenido de los mensajes', () => {
   // La promesa al cliente es "no vemos lo que ponés". Se verifica leyendo el
   // esquema: la vista panel_clientes no puede tocar la tabla mensajes.
-  const esquema = ['db/001_inicial.sql', 'db/002_fundacion_y_chat.sql']
-    .map((f) => readFileSync(new URL(`../${f}`, import.meta.url), 'utf8')).join('\n');
+  // Se leen TODOS los archivos de db/, no una lista escrita a mano: una
+  // migración nueva que agregue una vista tiene que quedar cubierta sola.
+  const dir = new URL('../db/', import.meta.url);
+  const esquema = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
+    .map((f) => readFileSync(new URL(f, dir), 'utf8')).join('\n');
 
   const vistas = esquema.split(/CREATE (?:OR REPLACE )?VIEW/).slice(1);
   assert.ok(vistas.length > 0, 'debería existir la vista del panel');
   for (const v of vistas) {
-    const cuerpo = v.split(';')[0];
+    // Se sacan los comentarios: el test mira el SQL que se ejecuta, no la prosa
+    // que lo explica (que justamente nombra las columnas que no hay que exponer).
+    const cuerpo = v.split(';')[0].replace(/--[^\n]*/g, '');
     // "mensajes_30d" y "sum(mensajes)" son columnas de uso_diario: contar
     // cuántos mensajes hubo está bien. Lo que no puede pasar es que la vista
     // LEA de las tablas del chat.
@@ -206,6 +211,10 @@ test('ninguna vista de admin expone el contenido de los mensajes', () => {
     // no puede haber es la columna seleccionada tal cual.
     assert.ok(!/^\s*p\.(manual|oferta|encuesta|fundacion)\b/m.test(cuerpo),
       'la vista expone si el bloque está cargado, nunca su contenido');
+    // De la biblioteca solo pueden salir números: cuántas piezas y cuántas
+    // publicó. El título de una pieza ya dice de qué habla su negocio.
+    assert.ok(!/\b(titulo|contenido)\b/.test(cuerpo),
+      'la vista de admin cuenta piezas, no las lee');
   }
 });
 

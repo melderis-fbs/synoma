@@ -54,6 +54,7 @@ function fakeDb({
   perfil = { manual: 'Mi manual', oferta: 'Mi oferta', encuesta: 'Mis frases', fundacion: 'Mi fundación' },
   mensajesHoy = 0,
   guardados = [],  // historial ya en la base: [{ rol, contenido }, ...]
+  piezas = [],     // biblioteca ya en la base, para /racha
   fallar = null,   // 'sesion' | 'perfil' | 'uso' | 'historial'
 } = {}) {
   const consultas = [];
@@ -89,6 +90,13 @@ function fakeDb({
     if (texto.includes('FROM conversaciones')) return [{ id: 'conv-1' }];
     if (texto.includes('INTO conversaciones')) return [{ id: 'conv-1' }];
 
+    // La biblioteca.
+    if (texto.includes('FROM piezas')) return piezas;
+    if (texto.includes('INTO piezas')) {
+      escrituras.push({ texto, valores });
+      return [{ id: 'p-1', tipo: valores[1], titulo: valores[2], estado: 'nueva', creado_en: 'hoy' }];
+    }
+
     if (texto.includes('INTO mensajes') || texto.includes('UPDATE conversaciones')) {
       escrituras.push({ texto, valores });
       return [];
@@ -103,6 +111,11 @@ function fakeDb({
   sql.turnoGuardado = () => {
     const ins = escrituras.find((e) => e.texto.includes('INTO mensajes'));
     return ins ? { pregunta: ins.valores[1], respuesta: ins.valores[3] } : null;
+  };
+  // El INSERT de guardarPieza interpola (cliente, tipo, titulo, contenido, comando).
+  sql.piezaGuardada = () => {
+    const ins = escrituras.find((e) => e.texto.includes('INTO piezas'));
+    return ins ? { tipo: ins.valores[1], titulo: ins.valores[2], contenido: ins.valores[3] } : null;
   };
   return sql;
 }
@@ -558,6 +571,102 @@ test('si guardar el turno falla, el cliente igual recibe su respuesta completa',
 
   assert.equal(eventos.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'respuesta buena');
   assert.equal(eventos.at(-1).type, 'done');
+});
+
+// --- la biblioteca ----------------------------------------------------------
+
+test('un comando de contenido guarda la pieza y lo avisa en el evento done', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['GANCHO: nadie te dice esto…']) });
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  const eventos = await readNdjson(await handler(post({ mensaje: '/guion elegir nutricionista' })));
+
+  const guardada = db.piezaGuardada();
+  assert.equal(guardada?.tipo, 'guion');
+  assert.equal(guardada?.titulo, 'elegir nutricionista');
+
+  // El front dice "guardado en tu biblioteca" leyendo esto. Si el aviso saliera
+  // sin que el guardado ocurriera, la frase sería mentira.
+  const done = eventos.at(-1);
+  assert.equal(done.type, 'done');
+  assert.equal(done.pieza?.tipo, 'guion');
+});
+
+test('un mensaje escrito a mano no ensucia la grilla', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['te explico…']) });
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  const eventos = await readNdjson(await handler(post({ mensaje: 'ayudame a pensar algo' })));
+
+  assert.equal(db.piezaGuardada(), null);
+  assert.equal(eventos.at(-1).pieza, null, 'el front ofrece el botón de guardar a mano');
+});
+
+test('los comandos de fundación no van a la biblioteca', async () => {
+  for (const cmd of ['/fundacion', '/pilares', '/racha']) {
+    globalThis.fetch = fakeFetch({ body: sseBody(['respuesta']) });
+    const db = fakeDb();
+    const handler = await loadHandler({}, db);
+    await readNdjson(await handler(post({ mensaje: cmd })));
+    assert.equal(db.piezaGuardada(), null, `${cmd} no debería guardar una pieza`);
+  }
+});
+
+test('si guardar la pieza falla, el cliente igual recibe su contenido', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['el guion completo']) });
+  const base = fakeDb();
+  const roto = async (strings, ...v) => {
+    const texto = Array.isArray(strings) ? strings.join('?') : String(strings);
+    if (texto.includes('INTO piezas')) throw new Error('base caída');
+    return base(strings, ...v);
+  };
+  const handler = await loadHandler({}, roto);
+  const eventos = await readNdjson(await handler(post({ mensaje: '/guion x' })));
+
+  assert.equal(eventos.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'el guion completo');
+  assert.equal(eventos.at(-1).type, 'done');
+  assert.equal(eventos.at(-1).pieza, null);
+});
+
+// --- /racha ve la biblioteca ------------------------------------------------
+
+test('/racha recibe un tercer bloque de system con la biblioteca', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler({}, fakeDb({
+    piezas: [{ tipo: 'guion', titulo: 'nutricionista', estado: 'publicada', creado_en: '2026-07-01', publicado_en: '2026-07-03' }],
+  }));
+  await handler(post({ mensaje: '/racha' }));
+
+  const { system } = spy.calls[0].payload;
+  assert.equal(system.length, 3, 'base + perfil + biblioteca');
+  assert.match(system[2].text, /BIBLIOTECA DEL CLIENTE/);
+  assert.match(system[2].text, /nutricionista/);
+  // Sin cache_control: es un bloque chico y distinto en cada repaso.
+  assert.equal(system[2].cache_control, undefined);
+});
+
+test('los demás comandos no pagan el bloque de biblioteca', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler({}, fakeDb({ piezas: [{ tipo: 'post', titulo: 't', estado: 'nueva', creado_en: 'x', publicado_en: null }] }));
+  await handler(post({ mensaje: '/semana' }));
+  assert.equal(spy.calls[0].payload.system.length, 2);
+});
+
+test('si la biblioteca no se puede leer, /racha responde igual', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const base = fakeDb();
+  const roto = async (strings, ...v) => {
+    const texto = Array.isArray(strings) ? strings.join('?') : String(strings);
+    if (texto.includes('FROM piezas')) throw new Error('base caída');
+    return base(strings, ...v);
+  };
+  const handler = await loadHandler({}, roto);
+  const res = await handler(post({ mensaje: '/racha' }));
+  assert.equal(res.status, 200);
+  assert.equal(spy.calls[0].payload.system.length, 2);
 });
 
 // --- reintentos -------------------------------------------------------------
