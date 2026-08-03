@@ -58,7 +58,31 @@ test('los mensajes vacíos se descartan en vez de romper el pedido', () => {
     { role: 'assistant', content: '   ' },
     { role: 'user', content: 'seguimos' },
   ]);
-  assert.deepEqual(r.map((m) => m.content), ['hola', 'seguimos']);
+  // Al caer la respuesta vacía quedan dos 'user' pegados. La API espera que los
+  // roles se alternen, así que se juntan en uno: un hilo válido vale más que un
+  // hilo fiel que la API rechaza o contesta cualquier cosa.
+  assert.deepEqual(r.map((m) => m.role), ['user']);
+  assert.equal(r[0].content, 'hola\n\nseguimos');
+});
+
+test('los roles siempre quedan alternados', () => {
+  const r = paraElModelo([
+    { role: 'user', content: 'a' },
+    { role: 'user', content: 'b' },
+    { role: 'assistant', content: 'c' },
+    { role: 'assistant', content: 'd' },
+    { role: 'user', content: 'e' },
+  ]);
+  assert.deepEqual(r.map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.deepEqual(r.map((m) => m.content), ['a\n\nb', 'c\n\nd', 'e']);
+});
+
+test('juntar mensajes no modifica el historial que vino de la base', () => {
+  // El array que devuelve historial() se usa en otros lados; si paraElModelo
+  // escribiera encima, el bug aparecería lejos de acá.
+  const original = [{ role: 'user', content: 'a' }, { role: 'user', content: 'b' }];
+  paraElModelo(original);
+  assert.equal(original[0].content, 'a');
 });
 
 test('un rol inventado no llega a la API', () => {
@@ -72,6 +96,35 @@ test('un rol inventado no llega a la API', () => {
 
 test('un mensaje enorme se recorta antes de mandarse', () => {
   const r = paraElModelo([{ role: 'user', content: 'x'.repeat(50000) }]);
+  assert.equal(r[0].content.length, 20000);
+});
+
+test('el historial completo tiene un tope de caracteres, no solo de mensajes', () => {
+  // 24 mensajes de 20.000 caracteres serían 480.000 en un solo pedido. Cuanto más
+  // grande la entrada, más tarda la PRIMERA palabra — y Netlify corta la función
+  // por duración total, así que un historial gordo la mata antes de escribir nada.
+  const largos = Array.from({ length: 24 }, (_, i) => ({
+    role: i % 2 ? 'assistant' : 'user', content: 'y'.repeat(20000),
+  }));
+  const r = paraElModelo(largos);
+  const total = r.reduce((n, m) => n + m.content.length, 0);
+  assert.ok(total <= 60000, `el contexto quedó en ${total} caracteres`);
+  assert.ok(r.length < 24, 'tiene que haber descartado los más viejos');
+});
+
+test('se descarta lo VIEJO, nunca la pregunta nueva', () => {
+  const r = paraElModelo([
+    { role: 'user', content: 'z'.repeat(39000) },
+    { role: 'assistant', content: 'z'.repeat(39000) },
+    { role: 'user', content: 'LA PREGUNTA NUEVA' },
+  ]);
+  assert.equal(r.at(-1).content, 'LA PREGUNTA NUEVA');
+});
+
+test('una pregunta sola más larga que el tope se manda igual', () => {
+  // Es el pedido del cliente: descartarlo por largo sería no responderle.
+  const r = paraElModelo([{ role: 'user', content: 'w'.repeat(20000) }]);
+  assert.equal(r.length, 1);
   assert.equal(r[0].content.length, 20000);
 });
 

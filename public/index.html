@@ -553,6 +553,7 @@ let CLIENTE = null;    // { email, nombre } cuando hay sesión
 let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let SENDING = false;
 let CHAT_CARGADO = false;   // para no volver a pedir el historial en cada entrada
+let ULTIMO_MENSAJE = '';    // para el botón de reintentar sin reescribir el pedido
 
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -1331,6 +1332,7 @@ async function send(){
   if(!text) return;
 
   SENDING = true;
+  ULTIMO_MENSAJE = text;
   $('send-btn').disabled = true;
   $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
   addMsg('user', text);
@@ -1426,6 +1428,22 @@ function handleSendError(err, body, acc){
     $('demo-pill').style.display='block';
     addMsg('bot', demoReply(), 'Ejemplo — motor sin conectar');
     return;                              // el servidor tampoco lo guarda: no es contenido real
+  }
+
+  // El motor no dijo nada. El servidor ya reintentó una vez solo; acá se le da el
+  // botón para volver a intentar sin tener que escribir de nuevo todo el pedido
+  // (que en un /revisar puede ser un borrador de dos páginas).
+  if(code === 'empty_response' && ULTIMO_MENSAJE){
+    const caja = startMsg('bot', 'No se pudo responder');
+    caja.appendChild(errorNote(message));
+    const b = document.createElement('button');
+    b.className = 'mini';
+    b.style.marginTop = '10px';
+    b.textContent = '↻ Reintentar';
+    b.onclick = () => { b.disabled = true; $('input').value = ULTIMO_MENSAJE; send(); };
+    caja.appendChild(b);
+    scrollDown();
+    return;
   }
 
   if(acc && body){

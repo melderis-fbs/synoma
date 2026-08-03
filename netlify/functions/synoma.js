@@ -180,7 +180,14 @@ export default async (req) => {
 
   // A partir de acá el stream ya arrancó: los errores se emiten DENTRO del
   // stream, porque los headers HTTP ya salieron.
-  return new Response(toNdjson(upstream.body, cliente, pregunta), {
+  // El reintento se pasa como función y no se llama acá: solo se usa si el stream
+  // termina sin una sola palabra, que es el único momento en que reintentar es
+  // invisible para el cliente.
+  const reintentar = () => callClaude({
+    apiKey: process.env.ANTHROPIC_API_KEY, system, messages: trimmed,
+  });
+
+  return new Response(toNdjson(upstream.body, cliente, pregunta, reintentar), {
     status: 200,
     headers: {
       ...cors,
@@ -244,19 +251,20 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
 //   {"type":"text","text":"..."}                    fragmento de texto
 //   {"type":"done","usage":{...}}                   terminó bien
 //   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
-function toNdjson(body, cliente, pregunta) {
+function toNdjson(body, cliente, pregunta, reintentar = null) {
   const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
 
   return new ReadableStream({
     async start(controller) {
       const emit = (obj) => controller.enqueue(encoder.encode(JSON.stringify(obj) + '\n'));
-      const reader = body.getReader();
-      let buffer = '';
       let usage = null;
       let emittedText = false;
       let respuesta = '';
       let stopReason = null;
+      // Para poder diagnosticar una respuesta vacía: sin saber qué eventos llegaron
+      // no hay forma de distinguir "el modelo no escribió nada" de "el stream vino
+      // con una forma que no sabemos leer".
+      let tipos = new Set();
       const arranque = Date.now();
 
       // Guardar el turno pasa DESPUÉS de cerrar el stream y sin await: el
@@ -269,7 +277,13 @@ function toNdjson(body, cliente, pregunta) {
           console.error('[synoma] no se pudo guardar el turno:', e?.message ?? e));
       };
 
-      try {
+      // Lee un stream de la API de punta a punta, emitiendo el texto a medida que
+      // llega. Devuelve 'error' si el propio stream reportó una falla.
+      const bombear = async (cuerpo) => {
+        const reader = cuerpo.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -285,6 +299,7 @@ function toNdjson(body, cliente, pregunta) {
 
             let ev;
             try { ev = JSON.parse(raw); } catch { continue; }
+            tipos.add(ev.type === 'content_block_delta' ? `delta:${ev.delta?.type}` : ev.type);
 
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
               emittedText = true;
@@ -300,27 +315,68 @@ function toNdjson(body, cliente, pregunta) {
               // tabla y no tenía forma de saber que faltaba algo.
               if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
             } else if (ev.type === 'error') {
-              // Error a mitad del stream. Se avisa; no se finge éxito.
-              console.error('[synoma] error en stream:', ev.error);
-              emit({
-                type: 'error',
-                error: 'stream_error',
-                message: 'El motor se cortó a mitad de la respuesta. Probá de nuevo.',
-              });
-              // Se guarda lo que alcanzó a llegar: es lo que el cliente tiene en
-              // pantalla, y que el historial diga otra cosa lo confundiría.
-              persistir();
-              controller.close();
-              return;
+              console.error('[synoma] error en stream:', JSON.stringify(ev.error ?? {}).slice(0, 300));
+              return 'error';
             }
           }
         }
+        return 'fin';
+      };
+
+      try {
+        let resultado = await bombear(body);
+
+        // Respuesta vacía: se reintenta UNA vez y en silencio. Se puede hacer
+        // justamente porque no salió ni un byte al navegador todavía, así que el
+        // cliente no ve el reintento: ve la respuesta buena o el error, nunca las
+        // dos cosas. Una completación vacía es un hipo transitorio de la API, y
+        // hacer que el cliente vuelva a escribir su pedido por eso es hacerle
+        // pagar a él un problema que no es suyo.
+        if (resultado === 'fin' && !emittedText && reintentar) {
+          console.warn(`[synoma] respuesta vacía (eventos: ${[...tipos].join(',') || 'ninguno'}) `
+            + `stop_reason=${stopReason ?? 'ninguno'} usage=${JSON.stringify(usage ?? {})} `
+            + `comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]} — reintentando una vez`);
+          try {
+            const otra = await reintentar();
+            if (otra?.body) {
+              tipos = new Set();
+              stopReason = null;
+              resultado = await bombear(otra.body);
+            }
+          } catch (e) {
+            console.error('[synoma] el reintento también falló:', e?.message ?? e);
+          }
+        }
+
+        if (resultado === 'error') {
+          emit({
+            type: 'error',
+            error: 'stream_error',
+            message: 'El motor se cortó a mitad de la respuesta. Probá de nuevo.',
+          });
+          // Se guarda lo que alcanzó a llegar: es lo que el cliente tiene en
+          // pantalla, y que el historial diga otra cosa lo confundiría.
+          persistir();
+          controller.close();
+          return;
+        }
 
         if (!emittedText) {
+          // Se deja TODO en el log: sin esto, "respuesta vacía" es un callejón sin
+          // salida para diagnosticar. Los tipos de evento dicen si el modelo no
+          // escribió nada o si el texto vino en una forma que no sabemos leer.
+          console.error('[synoma] SIGUE VACÍA tras el reintento. '
+            + `eventos=${[...tipos].join(',') || 'ninguno'} `
+            + `stop_reason=${stopReason ?? 'ninguno'} `
+            + `usage=${JSON.stringify(usage ?? {})} `
+            + `duracion=${Date.now() - arranque}ms `
+            + `comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]} `
+            + `mensajes=${cliente.mensajes_enviados ?? '?'}`);
+
           emit({
             type: 'error',
             error: 'empty_response',
-            message: 'El motor devolvió una respuesta vacía. Probá de nuevo.',
+            message: 'El motor se quedó sin decir nada — es un hipo de la API, no algo que hiciste mal. Volvé a mandar el mismo mensaje.',
           });
         } else {
           if (usage) {

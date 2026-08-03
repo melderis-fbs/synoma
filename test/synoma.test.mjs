@@ -379,11 +379,59 @@ test('un error a mitad del stream se reporta, no se hace pasar por éxito', asyn
   assert.ok(!events.some((e) => e.type === 'done'), 'no debe marcar done');
 });
 
-test('una respuesta vacía se reporta como error', async () => {
-  globalThis.fetch = fakeFetch({ body: sseBody([]) });
+// --- respuesta vacía --------------------------------------------------------
+// "El motor devolvió una respuesta vacía" era un callejón sin salida: el cliente
+// tenía que volver a escribir su pedido y en el log no quedaba con qué
+// diagnosticar. Una completación vacía es un hipo transitorio de la API, así que
+// se reintenta una sola vez — y se puede hacer en silencio justamente porque no
+// salió ni un byte al navegador todavía.
+
+test('una respuesta vacía se reintenta sola y el cliente no se entera', async () => {
+  let n = 0;
+  globalThis.fetch = async () => {
+    n++;
+    return new Response(n === 1 ? sseBody([]) : sseBody(['ahora sí, tu plan']), { status: 200 });
+  };
   const handler = await loadHandler();
   const events = await readNdjson(await handler(post(VALID)));
+
+  assert.equal(n, 2, 'debería haber reintentado');
+  assert.equal(events.filter((e) => e.type === 'text').map((e) => e.text).join(''), 'ahora sí, tu plan');
+  assert.equal(events.at(-1).type, 'done');
+  assert.ok(!events.some((e) => e.type === 'error'), 'el cliente no tiene que ver el hipo');
+});
+
+test('si la segunda también viene vacía, se avisa con un mensaje útil', async () => {
+  let n = 0;
+  globalThis.fetch = async () => { n++; return new Response(sseBody([]), { status: 200 }); };
+  const handler = await loadHandler();
+  const events = await readNdjson(await handler(post(VALID)));
+
+  assert.equal(n, 2, 'se reintenta UNA vez, no en bucle');
   assert.equal(events.at(-1).error, 'empty_response');
+  // El mensaje tiene que decirle que no es culpa suya y qué hacer.
+  assert.match(events.at(-1).message, /volvé a mandar/i);
+});
+
+test('el reintento no se dispara si ya salió texto', async () => {
+  // Si se reintentara acá, el cliente vería la respuesta dos veces pegada.
+  let n = 0;
+  globalThis.fetch = async () => { n++; return new Response(sseBody(['algo']), { status: 200 }); };
+  const handler = await loadHandler();
+  await readNdjson(await handler(post(VALID)));
+  assert.equal(n, 1);
+});
+
+test('una vacía no gasta el cupo del cliente ni ensucia el historial', async () => {
+  let n = 0;
+  globalThis.fetch = async () => { n++; return new Response(sseBody([]), { status: 200 }); };
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  await readNdjson(await handler(post(VALID)));
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.equal(db.turnoGuardado(), null, 'un turno sin respuesta no va al historial');
+  assert.equal(db.piezaGuardada(), null);
 });
 
 // --- prompt caching ---------------------------------------------------------

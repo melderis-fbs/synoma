@@ -34,6 +34,18 @@ export const MENSAJES_PANTALLA = 60;
 // más que esto es alguien pegando un libro.
 const MAX_CHARS = 20000;
 
+// Tope del historial COMPLETO que se le manda al modelo, en caracteres.
+//
+// Sin esto, 24 mensajes de 20.000 caracteres son 480.000 caracteres (~120.000
+// tokens) en un solo pedido. Eso trae dos problemas, y el segundo es el grave:
+//   1. Cuesta. Aunque el caché abarate el perfil, el historial no se cachea.
+//   2. Cuanto más grande la entrada, más tarda la PRIMERA palabra. Y como
+//      Netlify corta la función por duración total, un historial gordo hace que
+//      el pedido muera antes de escribir nada.
+// 40.000 caracteres son unas 12 páginas de conversación: de sobra para que no se
+// note el corte, y acotado como para que el arranque sea rápido.
+const MAX_CHARS_CONTEXTO = 40000;
+
 const recortar = (v) => String(v ?? '').slice(0, MAX_CHARS);
 
 // ---------------------------------------------------------------------------
@@ -94,13 +106,37 @@ export async function historial(clienteId, limite = MENSAJES_CONTEXTO) {
 // El historial que se le manda al modelo: solo role y content, y nunca
 // arrancando con un turno de 'assistant' (la API lo rechaza).
 export function paraElModelo(mensajes) {
-  const limpios = mensajes
+  let limpios = mensajes
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: recortar(m.content) }))
     .filter((m) => m.content.trim().length > 0);
 
+  // Se recorta por caracteres, tirando lo MÁS VIEJO: la pregunta nueva y las
+  // últimas respuestas son las que importan. El último mensaje entra siempre,
+  // aunque solo él ya pase el tope: es el pedido del cliente.
+  let total = 0;
+  const dentro = [];
+  for (let i = limpios.length - 1; i >= 0; i--) {
+    total += limpios[i].content.length;
+    if (total > MAX_CHARS_CONTEXTO && dentro.length > 0) break;
+    dentro.unshift(limpios[i]);
+  }
+  limpios = dentro;
+
   while (limpios.length && limpios[0].role !== 'user') limpios.shift();
-  return limpios;
+
+  // Se juntan los mensajes seguidos del mismo rol. La API espera que se vayan
+  // alternando; dos turnos de 'user' pegados pueden aparecer si un mensaje quedó
+  // vacío y se filtró arriba, y el resultado es un pedido que la API rechaza o
+  // contesta cualquier cosa. Preferimos un hilo válido a uno fiel.
+  const alternados = [];
+  for (const m of limpios) {
+    const anterior = alternados[alternados.length - 1];
+    if (anterior && anterior.role === m.role) anterior.content += `\n\n${m.content}`;
+    else alternados.push({ ...m });
+  }
+
+  return alternados;
 }
 
 // ---------------------------------------------------------------------------
