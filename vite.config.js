@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import { pathToFileURL } from 'url';
 import { readdir } from 'fs/promises';
 import { join, dirname } from 'path';
@@ -23,6 +23,15 @@ async function loadFunctions() {
 
 export default defineConfig(async ({ mode }) => {
   const routes = mode === 'serve' ? await loadFunctions() : [];
+
+  // Load .env vars so server functions see DATABASE_URL,
+  // SYNOMA_EMAILS_PRUEBA, RESEND_API_KEY, etc. — not just VITE_* vars.
+  if (mode === 'serve') {
+    const env = loadEnv(mode, __dirname, '');
+    for (const [k, v] of Object.entries(env)) {
+      if (!(k in process.env)) process.env[k] = v;
+    }
+  }
 
   return {
     server: {
