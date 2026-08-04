@@ -49,7 +49,7 @@ const MODEL = 'claude-sonnet-5';
 // la continuación solo y la pega en la misma burbuja (ver `truncada`). El cliente
 // ve una respuesta larga; abajo son varios pedidos cortos, cada uno dentro del
 // tope.
-const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 900;
+const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 8000;
 
 // Cuándo cortar por nuestra cuenta, antes de que corte Netlify.
 //
@@ -60,7 +60,7 @@ const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 900;
 // El valor por defecto es conservador porque no sabemos si el sitio tiene el tope
 // de 10 s o el de 26. Si te lo subieron a 26, poné SYNOMA_DEADLINE_MS=22000: van a
 // hacer falta menos vueltas y todo va a salir más rápido.
-const DEADLINE_MS = Number(process.env.SYNOMA_DEADLINE_MS) || 8500;
+const DEADLINE_MS = Number(process.env.SYNOMA_DEADLINE_MS) || 45000;
 
 // Hasta cuándo se puede reintentar una respuesta vacía.
 //
@@ -73,7 +73,7 @@ const DEADLINE_MS = Number(process.env.SYNOMA_DEADLINE_MS) || 8500;
 //
 // Pasados estos milisegundos ya no hay presupuesto para otra llamada completa:
 // se le informa el problema, que es recuperable, en lugar de arriesgar el 502.
-const MS_PARA_REINTENTAR = Number(process.env.SYNOMA_MS_REINTENTO) || 7000;
+const MS_PARA_REINTENTAR = Number(process.env.SYNOMA_MS_REINTENTO) || 35000;
 
 const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
@@ -289,9 +289,10 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
     body: JSON.stringify({
       model: MODEL,
       max_tokens: MAX_TOKENS,
-      stream: true, // ← el arreglo del timeout: los bytes salen de inmediato
+      stream: true,
       system,
       messages,
+      output_config: { effort: 'low' },
     }),
   });
 

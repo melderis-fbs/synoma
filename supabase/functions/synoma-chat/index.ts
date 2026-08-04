@@ -2,9 +2,9 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { SYSTEM_BASE } from "./_prompt.ts";
 
 const MODEL = "claude-sonnet-5";
-const MAX_TOKENS = Number(Deno.env.get("SYNOMA_MAX_TOKENS")) || 900;
-const DEADLINE_MS = Number(Deno.env.get("SYNOMA_DEADLINE_MS")) || 25000;
-const MS_PARA_REINTENTAR = Number(Deno.env.get("SYNOMA_MS_REINTENTO")) || 20000;
+const MAX_TOKENS = Number(Deno.env.get("SYNOMA_MAX_TOKENS")) || 8000;
+const DEADLINE_MS = Number(Deno.env.get("SYNOMA_DEADLINE_MS")) || 45000;
+const MS_PARA_REINTENTAR = Number(Deno.env.get("SYNOMA_MS_REINTENTO")) || 35000;
 const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
 const MENSAJES_CONTEXTO = 24;
@@ -228,7 +228,7 @@ async function callClaude(apiKey: string, system: any[], messages: any[], attemp
       "anthropic-version": "2023-06-01",
       "content-type": "application/json",
     },
-    body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, stream: true, system, messages }),
+    body: JSON.stringify({ model: MODEL, max_tokens: MAX_TOKENS, stream: true, system, messages, output_config: { effort: "low" } }),
   });
   if (res.ok) return res;
   const retryable = res.status === 429 || res.status === 529 || res.status >= 500;
