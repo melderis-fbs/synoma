@@ -365,10 +365,10 @@
 
     <div class="step-card">
       <span class="pill">Paso 4 · opcional</span>
-      <label>Mi Fundación</label>
-      <small>Los 8 bloques: tu porqué, tu objetivo, tus 3-5 pilares, tu banco de historias, tus opiniones fuertes, a quién le hablás, su mundo interno y tu voz. <b>¿No la tenés escrita?</b> Guardá lo que ya cargaste, entrá al dashboard y escribí <b>/fundacion</b>: Synoma te la arma preguntándote de a un bloque por vez, y después la pegás acá.</small>
+      <label>Mis Bases</label>
+      <small>Las 8 bases de tu marca: tu porqué, tu meta, tus 3-5 pilares, tu banco de historias, tus creencias filosas, a quién le hablás, su mundo interno y tu voz. <b>¿No las tenés escritas?</b> Guardá lo que ya cargaste, entrá al dashboard y escribí <b>/fundacion</b>: Synoma te las arma preguntándote de a una base por vez, y después las pegás acá.</small>
       <div data-video="fundacion"></div>
-      <textarea id="f-fundacion" placeholder="Pegá acá tu Fundación (o dejalo vacío y usá /fundacion)…"></textarea>
+      <textarea id="f-fundacion" placeholder="Pegá acá tus Bases (o dejalo vacío y usá /fundacion)…"></textarea>
     </div>
 
     <button class="btn" id="btn-guardar" onclick="guardarIdentidad()">Guardar y entrar a mi dashboard →</button>
@@ -391,7 +391,7 @@
   <div class="dash-body">
     <div class="cmds">
       <div class="section-label"><b>Empezá acá</b></div>
-      <button class="cmd" onclick="runCmd('/fundacion')"><span class="em">📐</span> Armar mi Fundación</button>
+      <button class="cmd" onclick="runCmd('/fundacion')"><span class="em">📐</span> Armar mis Bases</button>
       <div class="section-label"><b>Planificar</b></div>
       <button class="cmd" onclick="runCmd('/semana')"><span class="em">📅</span> Mi semana de contenido</button>
       <button class="cmd" onclick="askCmd('/idea','¿Sobre qué tema?')"><span class="em">💡</span> Ideas sobre un tema</button>
@@ -407,7 +407,7 @@
       <button class="cmd" onclick="askCmd('/objecion','Pegá el comentario o DM:')"><span class="em">💬</span> Responder objeción</button>
       <div class="section-label"><b>Medir</b></div>
       <button class="cmd" onclick="runCmd('/racha')"><span class="em">📊</span> Mi racha semanal</button>
-      <div class="section-label"><b>Afinar mi fundación</b></div>
+      <div class="section-label"><b>Afinar mis bases</b></div>
       <button class="cmd" onclick="runCmd('/pilares')"><span class="em">🏛️</span> Mis pilares de contenido</button>
       <button class="cmd" onclick="runCmd('/persona')"><span class="em">🎯</span> A quién le hablo</button>
       <button class="cmd" onclick="runCmd('/hottakes')"><span class="em">⚡</span> Mis opiniones fuertes</button>
@@ -419,7 +419,7 @@
           <div class="mark">↑</div>
           <h2>Hola, soy Synoma 👋</h2>
           <p>Tu motor de contenido, entrenado con tu identidad. Tocá un comando del menú o escribime abajo.</p>
-          <p>Si es tu primera vez, empezá por <b>📐 Armar mi Fundación</b>: te hago 8 preguntas y de ahí sale todo lo demás. Si ya la tenés, andá directo a <b>📅 Mi semana</b>.</p>
+          <p>Si es tu primera vez, empezá por <b>📐 Armar mis Bases</b>: te hago 8 preguntas y de ahí sale todo lo demás. Si ya las tenés, andá directo a <b>📅 Mi semana</b>.</p>
           <p class="nota-memoria">Todo lo que hablemos te queda guardado. Entrá con tu email desde donde quieras y seguimos donde lo dejamos.</p>
           <div data-video="comandos"></div>
           <div class="ancla" id="ancla-dash"></div>
@@ -492,7 +492,7 @@ const VIDEOS = {
   manual:     '',   // paso 1              — qué pegar del Manual de Transformación
   oferta:     '',   // paso 2              — qué pegar de la Oferta en Una Página
   encuesta:   '',   // paso 3              — de dónde salen las frases de la encuesta
-  fundacion:  '',   // paso 4              — qué son los 8 bloques de la Fundación
+  fundacion:  '',   // paso 4              — qué son las 8 Bases
   comandos:   '',   // dashboard           — recorrido por los comandos
 };
 
@@ -501,7 +501,7 @@ const VIDEO_LABELS = {
   manual:     'Qué tengo que pegar acá',
   oferta:     'Qué tengo que pegar acá',
   encuesta:   'De dónde saco estas frases',
-  fundacion:  'Qué son los 8 bloques',
+  fundacion:  'Qué son las 8 Bases',
   comandos:   'Recorrido por los comandos',
 };
 
@@ -967,7 +967,7 @@ async function cargarHistorial(){
 }
 
 async function borrarHistorial(){
-  if(!confirm('¿Borrar toda tu conversación con Synoma?\n\nTu identidad y tu Fundación NO se borran: seguís teniendo todo cargado. Solo se borra el chat, y no se puede recuperar.')) return;
+  if(!confirm('¿Borrar toda tu conversación con Synoma?\n\nTu identidad y tus Bases NO se borran: seguís teniendo todo cargado. Solo se borra el chat, y no se puede recuperar.')) return;
 
   try{
     const { data: convs } = await sb.from('conversaciones')
@@ -981,7 +981,7 @@ async function borrarHistorial(){
     }
 
     $('msgs').replaceChildren();
-    addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tu Fundación siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
+    addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tus Bases siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
   }catch(e){
     alert('No pudimos borrar el historial. Probá de nuevo.');
   }
