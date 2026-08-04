@@ -1,13 +1,6 @@
 [build]
-  # Aplica las migraciones de db/*.sql antes de publicar. Así las tablas se
-  # crean solas en cada deploy y no hay que abrir una terminal nunca.
-  command = "npm run migrar"
-
-  # Antes era publish = "." — publicaba TODA la raíz del repo, incluido
-  # README-DEPLOY.md (que nombra quién compró la API key, el formato de los
-  # códigos de acceso y el costo por cliente). Con "public" solo se publica
-  # lo que va al navegador.
-  publish = "public"
+  command = "npm run build"
+  publish = "dist"
   functions = "netlify/functions"
 
 [build.environment]
@@ -30,3 +23,8 @@
     # El HTML no se cachea: así un deploy con cambios llega al cliente en el
     # próximo refresh y no queda pegado a una versión vieja.
     Cache-Control = "no-cache"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

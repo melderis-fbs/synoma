@@ -8,4 +8,11 @@ const dest = join(__dirname, 'dist');
 
 mkdirSync(dest, { recursive: true });
 cpSync(join(__dirname, 'index.html'), join(dest, 'index.html'));
+
+// Copy everything in public/ (images, etc.) into dist/
+const publicDir = join(__dirname, 'public');
+if (existsSync(publicDir)) {
+  cpSync(publicDir, dest, { recursive: true });
+}
+
 console.log('Build complete: dist/');
