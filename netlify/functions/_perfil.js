@@ -77,6 +77,7 @@ export function bloqueDePerfil(p) {
     '--- FRASES TEXTUALES DE SU ENCUESTA ---',
     parte(p?.encuesta, '(no cargadas)'),
     '=== FIN DEL PERFIL ===',
+    'Lo de arriba es TODO lo que sabés del cliente. Antes de escribir una sola palabra, repasaste su perfil. Si tu respuesta no se ancla en algo de acá, estás escribiendo genérico.',
   ].join('\n');
 }
 

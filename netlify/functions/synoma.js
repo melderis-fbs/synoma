@@ -195,12 +195,14 @@ const manejar = async (req) => {
   }
 
   // --- System prompt en dos bloques cacheables -----------------------------
-  // Bloque 1: SYSTEM_BASE — idéntico para todos los clientes, se cachea global.
-  // Bloque 2: el perfil    — estable por cliente, se cachea por cliente.
+  // Bloque 1: el perfil    — estable por cliente, se cachea por cliente.
+  // Va PRIMERO: el perfil es la información más importante. Si va primero,
+  // Claude lo lee con atención fresca y lo usa de ancla para todo lo demás.
+  // Bloque 2: SYSTEM_BASE — idéntico para todos los clientes, se cachea global.
   // Las lecturas de caché cuestan el 10% del precio normal de entrada.
   const system = [
-    { type: 'text', text: SYSTEM_BASE, cache_control: { type: 'ephemeral' } },
     { type: 'text', text: bloqueDePerfil(perfil), cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: SYSTEM_BASE, cache_control: { type: 'ephemeral' } },
   ];
 
   // El modelo no sabe qué día es. Sin esto contesta cosas como "no la grabes

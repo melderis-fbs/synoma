@@ -95,6 +95,7 @@ function bloqueDePerfil(perfil: any) {
     "--- FRASES TEXTUALES DE SU ENCUESTA ---",
     parte(p.encuesta, "(no cargadas)"),
     "=== FIN DEL PERFIL ===",
+    "Lo de arriba es TODO lo que sabés del cliente. Antes de escribir una sola palabra, repasaste su perfil. Si tu respuesta no se ancla en algo de acá, estás escribiendo genérico.",
   ].join("\n");
 }
 
@@ -310,10 +311,13 @@ Deno.serve(async (req: Request) => {
   const perfil = perfiles?.[0] || null;
   if (!perfil?.oferta) return json({ error: "sin_perfil", message: "Primero cargá tu identidad." }, 409);
 
-  // Build system prompt
+  // Build system prompt — perfil PRIMERO, reglas DESPUÉS.
+  // El perfil es la información más importante: si va primero, Claude lo
+  // lee con atención fresca y lo usa de ancla para todo lo demás. Las reglas
+  // van después porque le dicen cómo usar lo que ya leyó.
   const system = [
-    { type: "text", text: SYSTEM_BASE, cache_control: { type: "ephemeral" } },
     { type: "text", text: bloqueDePerfil(perfil), cache_control: { type: "ephemeral" } },
+    { type: "text", text: SYSTEM_BASE, cache_control: { type: "ephemeral" } },
     { type: "text", text: bloqueDeFecha() },
   ];
 
