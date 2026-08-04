@@ -179,8 +179,8 @@ async function historialV2(clienteId: string, limite: number) {
   const convId = convs[0].id;
   // Get last N messages
   const msgs = await supabaseSelect("mensajes", "rol,contenido,creado_en", `conversacion_id=eq.${convId}&order=creado_en.desc&limit=${limite}`);
-  // Reverse to chronological order
-  return (msgs || []).reverse();
+  // Map DB columns (rol, contenido) to the shape the API expects (role, content)
+  return (msgs || []).reverse().map((m: any) => ({ role: m.rol, content: m.contenido }));
 }
 
 async function guardarTurno(clienteId: string, pregunta: string, respuesta: string) {
