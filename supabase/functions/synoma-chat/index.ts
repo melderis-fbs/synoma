@@ -80,13 +80,21 @@ async function supabaseDelete(table: string, filter: string) {
 // --- Profile block for the model ---
 function bloqueDePerfil(perfil: any) {
   const p = perfil || {};
+  const parte = (v: string, vacio: string) => {
+    const s = String(v ?? "").trim();
+    return s || vacio;
+  };
   return [
-    "=== PERFIL DEL CLIENTE ===",
-    `\nMANUAL DE TRANSFORMACIÓN:\n${p.manual || "(no cargado)"}`,
-    `\nOFERTA EN UNA PÁGINA:\n${p.oferta || "(no cargado)"}`,
-    `\nFRASES DE LA ENCUESTA:\n${p.encuesta || "(no cargado)"}`,
-    `\nFUNDACIÓN:\n${p.fundacion || "(no cargado)"}`,
-    "=== FIN PERFIL ===",
+    "=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===",
+    "--- SU FUNDACIÓN (los 8 bloques) ---",
+    parte(p.fundacion, "(no cargada — si te hace falta un bloque, pedíselo, y ofrecele el comando /fundacion)"),
+    "--- SU MANUAL DE TRANSFORMACIÓN ---",
+    parte(p.manual, "(no cargado — pedile que lo cargue en \"Mi identidad\")"),
+    "--- SU OFERTA EN UNA PÁGINA ---",
+    parte(p.oferta, "(no cargada)"),
+    "--- FRASES TEXTUALES DE SU ENCUESTA ---",
+    parte(p.encuesta, "(no cargadas)"),
+    "=== FIN DEL PERFIL ===",
   ].join("\n");
 }
 
