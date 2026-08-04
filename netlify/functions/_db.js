@@ -83,7 +83,7 @@ export function getSql() {
     let text = '';
     for (let i = 0; i < strings.length; i++) {
       text += strings[i];
-      if (i < values.length) text += `${i + 1}`;
+      if (i < values.length) text += '$' + (i + 1);
     }
     return _pool.query(text, values).then(r => r.rows);
   };
@@ -140,7 +140,7 @@ export async function baseDisponible() {
 export function normalizarEmail(raw) {
   return String(raw ?? '')
     .normalize('NFKC')
-        .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')   // espacios, incluidos los invisibles
+    .replace(/[\s\u00A0\u200B-\u200D\uFEFF]/g, '')   // espacios, incluidos los invisibles
     .toLowerCase();
 }
 

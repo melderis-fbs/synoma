@@ -17,7 +17,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 
-const HTML_PATH = new URL('../public/index.html', import.meta.url);
+const HTML_PATH = new URL('../index.html', import.meta.url);
 const HTML = readFileSync(HTML_PATH, 'utf8');
 
 // --- ¿se puede correr? ------------------------------------------------------
