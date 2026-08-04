@@ -1510,6 +1510,12 @@ async function send(opciones = {}){
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+    // Si el stream termina SIN un evento 'done', la respuesta se cortó a la fuerza
+    // — típicamente porque la plataforma mató la función a mitad de camino. El
+    // navegador ve un 200 y un stream que se acaba: sin este control, no mostraba
+    // absolutamente nada y el cliente se quedaba mirando una pantalla en blanco
+    // sin saber si tenía que esperar o reintentar.
+    let vioDone = false;
 
     while(true){
       const { value, done } = await reader.read();
@@ -1533,6 +1539,7 @@ async function send(opciones = {}){
           body.innerHTML = renderLite(acc);
           scrollDown();
         } else if(ev.type === 'done'){
+          vioDone = true;
           // El servidor confirma si la pieza quedó guardada. Si no vino de un
           // comando de contenido, se ofrece el botón para guardarla a mano.
           if(body && acc){
@@ -1568,10 +1575,16 @@ async function send(opciones = {}){
             scrollDown();
           }
         } else if(ev.type === 'error'){
+          vioDone = true;   // hubo un cierre explícito: no es un corte silencioso
           throw { code: ev.error, message: ev.message };
         }
       }
     }
+
+    // El stream se terminó sin cerrar. No es un error del cliente ni de la API:
+    // es la plataforma cortando la invocación. Se trata igual que una respuesta
+    // truncada, porque es lo que es.
+    if(!vioDone) throw { code: 'corte_plataforma', message: '', cortado: true };
 
     // No hace falta guardar nada acá: el servidor ya persistió el turno.
   }catch(err){
@@ -1595,7 +1608,20 @@ function textoDeEstado(status){
 
 function handleSendError(err, body, acc){
   const code = (err && err.code) || 'unknown';
-  const message = (err && err.message) || 'Ocurrió un error inesperado. Probá de nuevo.';
+  let message = (err && err.message) || 'Ocurrió un error inesperado. Probá de nuevo.';
+
+  // La plataforma cortó la invocación a mitad del stream. Lo que llegó es válido,
+  // así que se conserva y se ofrece seguir; lo que NO se puede hacer es no mostrar
+  // nada, que es lo que pasaba antes de detectar este caso.
+  if(code === 'corte_plataforma'){
+    if(acc && body){
+      limpiarNotas(body.parentNode);
+      body.parentNode.appendChild(avisoDeCorte(body, 1, null));
+      scrollDown();
+      return;
+    }
+    message = 'El servidor cortó la respuesta antes de que el motor dijera nada. Probá de nuevo — la segunda vez suele salir enseguida.';
+  }
 
   // La sesión venció: se vuelve al login en lugar de dejarlo reintentando algo
   // que nunca va a funcionar.
@@ -1621,7 +1647,7 @@ function handleSendError(err, body, acc){
   // El motor no dijo nada. El servidor ya reintentó una vez solo; acá se le da el
   // botón para volver a intentar sin tener que escribir de nuevo todo el pedido
   // (que en un /revisar puede ser un borrador de dos páginas).
-  if(code === 'empty_response' && ULTIMO_MENSAJE){
+  if((code === 'empty_response' || code === 'demasiado_lento' || code === 'corte_plataforma') && ULTIMO_MENSAJE){
     const caja = startMsg('bot', 'No se pudo responder');
     caja.appendChild(errorNote(message));
     const b = document.createElement('button');

@@ -377,10 +377,13 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
         while (true) {
           // Cortamos NOSOTROS antes de que corte Netlify. Cortar acá deja al
           // cliente con el texto que llegó, guardado y con posibilidad de seguir;
-          // que corte Netlify es un 504 en el que se pierde todo.
-          if (emittedText && Date.now() - inicioPedido > DEADLINE_MS) {
+          // que corte Netlify es perder todo en silencio.
+          if (Date.now() - inicioPedido > DEADLINE_MS) {
             reader.cancel().catch(() => {});
-            return 'tiempo';
+            // Si todavía no llegó una sola palabra, el problema no es cuánto
+            // escribe el modelo: es cuánto tarda en ARRANCAR. Es un caso distinto
+            // y hay que decirlo distinto, porque no hay nada que continuar.
+            return emittedText ? 'tiempo' : 'tarde';
           }
 
           const { value, done } = await reader.read();
@@ -451,6 +454,22 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           } catch (e) {
             console.error('[synoma] el reintento también falló:', e?.message ?? e);
           }
+        }
+
+        // El modelo tardó demasiado en decir la primera palabra. Sin texto no hay
+        // nada que continuar, así que se informa como error — pero como error
+        // NUESTRO y con una salida, no como una falla del cliente.
+        if (resultado === 'tarde') {
+          console.error('[synoma] el modelo no arrancó en el presupuesto: '
+            + `${Date.now() - inicioPedido}ms comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]} `
+            + `entrada=${JSON.stringify(usage ?? {})}`);
+          emit({
+            type: 'error',
+            error: 'demasiado_lento',
+            message: 'El motor tardó demasiado en arrancar y el servidor cortó la espera. Probá de nuevo — la segunda vez suele salir enseguida.',
+          });
+          cerrar();
+          return;
         }
 
         // 'tiempo' NO es un error: hay texto válido en pantalla. Sigue por el

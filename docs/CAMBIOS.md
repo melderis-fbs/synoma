@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 200 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 209 tests en verde (200 de servidor + 9 de interfaz en Chromium).
 
 ---
 
@@ -724,6 +724,73 @@ botón principal lleva al calendario, que es su forma útil — no al texto.
 
 ---
 
+## 🔴 18. El peor de todos: la pantalla en blanco
+
+**Lo que se veía al pedir la semana: NADA.** Ni texto, ni error, ni aviso. Los 200
+tests del servidor pasaban.
+
+**Y era consecuencia directa del arreglo anterior.** El `ping` que se agregó para
+que la plataforma abriera las cabeceras HTTP funcionó *demasiado* bien: ahora el
+navegador recibe un 200 y la conexión queda abierta. Cuando Netlify mata la
+función a mitad de camino, el stream **simplemente se termina**, sin evento de
+cierre y sin error. El navegador leía el `ping`, no tenía nada que mostrar, y se
+quedaba callado.
+
+O sea: convertí un "504 con mensaje" en un "200 en silencio". Peor, porque el
+cliente no sabe si esperar, reintentar o avisar.
+
+**El arreglo, en dos lados.**
+
+*En el navegador — no confiar en que el stream cerró bien:*
+
+```js
+let vioDone = false;
+// ... en el bucle: if(ev.type === 'done') vioDone = true;
+if(!vioDone) throw { code: 'corte_plataforma', ... };
+```
+
+Si llegó texto, se conserva y se ofrece continuar. Si no llegó nada, sale un
+mensaje claro con botón de reintentar.
+
+*En el servidor — avisar antes de que nos maten:* el deadline interno ya no exige
+que haya texto. Si el modelo no dijo una palabra dentro del presupuesto, se corta
+y se manda un error explícito (`demasiado_lento`). Es un caso distinto de "quedó
+cortada" y merece otro mensaje: no hay nada que continuar.
+
+---
+
+## 🟢 19. Tests de interfaz, en un navegador de verdad
+
+Este bug es la razón por la que existe `test/ui.test.mjs`.
+
+Ningún test de servidor podía verlo: el fallo estaba en **cómo el navegador
+interpreta un stream que se termina sin cerrar**. Así que ahora los casos críticos
+se prueban abriendo la app en Chromium con la API simulada.
+
+Los nueve casos, y cada uno está por algo que ya pasó o que dolería mucho:
+
+| Caso | Qué protege |
+|---|---|
+| Stream cortado sin una palabra | **el bug de arriba** — nunca más pantalla en blanco |
+| Stream cortado con texto a medias | que lo que llegó se conserve y se pueda seguir |
+| Respuesta vacía del motor | que salga mensaje y botón, no silencio |
+| Respuesta completa | que la burbuja se convierta en la tarjeta de la biblioteca |
+| "Ver el texto acá" | que el texto completo no se haya perdido |
+| Continuación automática | que se complete sola, en la MISMA burbuja |
+| Id de pieza en la continuación | que la biblioteca no quede con "(1 de 3)", "(2 de 3)"… |
+| Tope de tramos | que un modelo que no termina no pida para siempre |
+| Error del servidor | que el mensaje llegue a la pantalla |
+
+**Se verificó que el test tiene dientes**, que es la parte que suele saltearse: se
+corrió contra la versión sin el arreglo y da 0 burbujas. Un test que no falla con
+el código roto no sirve para nada.
+
+Se saltean solos si no hay Chromium o `playwright-core`, así que `npm test` sigue
+andando en cualquier máquina. El build de Netlify no los corre (solo corre las
+migraciones).
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -769,7 +836,7 @@ rollback.
 
 ```bash
 npm install
-npm test              # 200 tests, deberían pasar todos
+npm test              # 209 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 

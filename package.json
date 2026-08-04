@@ -16,5 +16,8 @@
     "migrar": "node scripts/migrar.js",
     "dev": "netlify dev",
     "deploy": "netlify deploy --prod"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.62.1"
   }
 }
