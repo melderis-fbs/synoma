@@ -471,7 +471,14 @@
 
 <div class="demo-pill" id="demo-pill">MODO DEMO — SIN CONEXIÓN AL MOTOR</div>
 
-<script>
+<script type="module">
+import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
+
+const SUPABASE_URL = 'https://lzdzgquzucgznrmeldix.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6ZHpncXV6dWNnem5ybWVsZGl4Iiwicm9sISI6ImFub24iLCJpYXQiOjE3ODU4Njk3NTgsImV4cCI6MjEwMTQ0NTc1OH0.9Pa6SL-an_9KnQ13QWDChLdLCHEWaBhtrlqjA6fcPV8';
+const EDGE_URL = SUPABASE_URL + '/functions/v1/synoma-chat';
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 /* ---------- videos explicativos ----------------------------------------------
    Pegá acá las URLs y listo. Vacío = no se muestra nada, la app funciona igual.
    Sirven YouTube (público o "no listado"), Vimeo y Loom: el proveedor se detecta
@@ -565,7 +572,8 @@ function mountVideos(){
 const $ = id => document.getElementById(id);
 
 let EMAIL = '';        // solo durante el login
-let CLIENTE = null;    // { email, nombre } cuando hay sesión
+let EMAIL_CLIENTE_ID = null;
+let CLIENTE = null;    // { email, nombre, id } cuando hay sesión
 let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let SENDING = false;
 let CHAT_CARGADO = false;   // para no volver a pedir el historial en cada entrada
@@ -576,14 +584,34 @@ function show(view){
   $(view).classList.add('active');
 }
 
-// Todas las llamadas van con la cookie de sesión. Es mismo origen, así que el
-// navegador la manda solo; same-origin es explícito para que no dependa del
-// default del navegador.
-async function api(url, opciones = {}){
-  const res = await fetch(url, { credentials:'same-origin', ...opciones });
-  let datos = null;
-  try { datos = await res.json(); } catch(e) { /* puede no traer cuerpo */ }
-  return { res, datos };
+// SHA-256 en el navegador para hashear el código (igual que hace el servidor)
+async function sha256(texto){
+  const buf = new TextEncoder().encode(texto);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+// Sesión: vive en localStorage. El token es un random string; su hash se guarda
+// en la tabla sesiones para validar.
+function tokenSesion(){ return crypto.randomUUID() + crypto.randomUUID(); }
+
+function guardarSesionLocal(cliente){
+  const token = tokenSesion();
+  localStorage.setItem('synoma_token', token);
+  localStorage.setItem('synoma_cliente', JSON.stringify(cliente));
+  return token;
+}
+
+function leerSesionLocal(){
+  const token = localStorage.getItem('synoma_token');
+  const data = localStorage.getItem('synoma_cliente');
+  if(!token || !data) return null;
+  try { return { token, cliente: JSON.parse(data) }; } catch { return null; }
+}
+
+function borrarSesionLocal(){
+  localStorage.removeItem('synoma_token');
+  localStorage.removeItem('synoma_cliente');
 }
 
 /* =============================================================================
@@ -665,26 +693,45 @@ async function pedirCodigo(reenvio){
   msgLogin(reenvio ? 'Reenviando…' : 'Verificando tu acceso…', 'info');
 
   try{
-    const { res, datos } = await api('/api/auth/solicitar', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email }),
-    });
+    // Busca el cliente por email directamente en Supabase
+    const { data: clientes, error } = await sb.from('clientes')
+      .select('id, email, nombre, acceso')
+      .eq('email', email)
+      .limit(1);
 
-    if(res.ok){
-      EMAIL = email;
-      $('email-eco').textContent = email;
-      $('paso-email').hidden = true;
-      $('paso-codigo').hidden = false;
-      $('codigo-input').focus();
-      msgLogin('');
-      if(datos?.codigo_desarrollo){ mostrarCodigoDeDesarrollo(datos.codigo_desarrollo); }
+    if(error) throw error;
+    if(!clientes || clientes.length === 0){
+      msgLogin('No encontramos ese email. Revisá que esté bien escrito.');
       return;
     }
 
-    if(datos?.error === 'acceso_terminado'){ mostrarRenovacion(datos); return; }
-    msgLogin(datos?.message || 'No pudimos enviarte el código. Probá de nuevo.');
+    const cliente = clientes[0];
+    if(cliente.acceso === 'suspendido'){
+      mostrarRenovacion({ message: 'Tu acceso a Synoma terminó.' });
+      return;
+    }
+
+    // Genera código de 6 dígitos
+    const codigo = String(Math.floor(100000 + Math.random() * 900000));
+    const hash = await sha256(codigo);
+    const expira = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
+
+    // Guarda el código en la base
+    const { error: insErr } = await sb.from('codigos_acceso')
+      .insert({ email, codigo_hash: hash, expira_en: expira });
+
+    if(insErr) throw insErr;
+
+    EMAIL = email;
+    EMAIL_CLIENTE_ID = cliente.id;
+    $('email-eco').textContent = email;
+    $('paso-email').hidden = true;
+    $('paso-codigo').hidden = false;
+    $('codigo-input').focus();
+    msgLogin('');
+    mostrarCodigoDeDesarrollo(codigo);
   }catch(e){
-    msgLogin('Sin conexión. Revisá tu internet y probá de nuevo.');
+    msgLogin('No pudimos enviarte el código. Probá de nuevo.');
   }finally{
     $('btn-email').disabled = false;
   }
@@ -719,23 +766,72 @@ async function confirmarCodigo(){
   msgLogin('Entrando…', 'info');
 
   try{
-    const { res, datos } = await api('/api/auth/verificar', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email: EMAIL, codigo }),
-    });
+    const hash = await sha256(codigo);
 
-    if(res.ok){
-      CLIENTE = datos.cliente;
-      msgLogin('');
-      if(datos.perfil_cargado){ entrarDash(); } else { await abrirIdentidad(); }
+    // Busca el código en la base
+    const { data: codigos, error } = await sb.from('codigos_acceso')
+      .select('id, email, expira_en, usado_en, intentos')
+      .eq('email', EMAIL)
+      .eq('codigo_hash', hash)
+      .is('usado_en', null)
+      .order('creado_en', { ascending: false })
+      .limit(1);
+
+    if(error) throw error;
+    if(!codigos || codigos.length === 0){
+      msgLogin('El código no es correcto. Probá de nuevo.');
+      $('codigo-input').select();
       return;
     }
 
-    if(datos?.error === 'acceso_terminado'){ mostrarRenovacion(datos); return; }
-    msgLogin(datos?.message || 'No pudimos validar el código.');
-    $('codigo-input').select();
+    const reg = codigos[0];
+    if(new Date(reg.expira_en) < new Date()){
+      msgLogin('El código venció. Pedí uno nuevo.');
+      return;
+    }
+
+    // Marca como usado
+    await sb.from('codigos_acceso')
+      .update({ usado_en: new Date().toISOString() })
+      .eq('id', reg.id);
+
+    // Busca el cliente para tener nombre
+    const { data: clientes } = await sb.from('clientes')
+      .select('id, email, nombre')
+      .eq('email', EMAIL)
+      .limit(1);
+
+    const cliente = clientes?.[0] || { id: EMAIL_CLIENTE_ID, email: EMAIL, nombre: null };
+    CLIENTE = { email: cliente.email, nombre: cliente.nombre, id: cliente.id };
+
+    // Crea la sesión en la base
+    const token = guardarSesionLocal(CLIENTE);
+    const tokenHash = await sha256(token);
+    await sb.from('sesiones').insert({
+      cliente_id: cliente.id,
+      token_hash: tokenHash,
+      expira_en: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    });
+
+    // Actualiza ultimo_acceso
+    await sb.from('clientes').update({ ultimo_acceso_en: new Date().toISOString() }).eq('id', cliente.id);
+
+    msgLogin('');
+
+    // ¿Tiene perfil cargado?
+    const { data: perfiles } = await sb.from('perfiles')
+      .select('oferta')
+      .eq('cliente_id', cliente.id)
+      .limit(1);
+
+    if(perfiles?.[0]?.oferta?.trim()){
+      entrarDash();
+    } else {
+      await abrirIdentidad();
+    }
   }catch(e){
-    msgLogin('Sin conexión. Revisá tu internet y probá de nuevo.');
+    msgLogin('No pudimos validar el código. Probá de nuevo.');
+    $('codigo-input').select();
   }finally{
     $('btn-codigo').disabled = false;
   }
@@ -751,7 +847,7 @@ function volverAEmail(){
 }
 
 async function salir(){
-  try{ await api('/api/auth/sesion', { method:'DELETE' }); }catch(e){}
+  borrarSesionLocal();
   location.reload();
 }
 
@@ -763,12 +859,16 @@ async function abrirIdentidad(){
   show('view-setup');
   $('setup-msg').textContent = '';
 
-  const { res, datos } = await api('/api/perfil');
-  if(res.ok && datos?.perfil){
-    $('f-manual').value    = datos.perfil.manual    || '';
-    $('f-oferta').value    = datos.perfil.oferta    || '';
-    $('f-encuesta').value  = datos.perfil.encuesta  || '';
-    $('f-fundacion').value = datos.perfil.fundacion || '';
+  const { data: perfiles } = await sb.from('perfiles')
+    .select('manual, oferta, encuesta, fundacion')
+    .eq('cliente_id', CLIENTE.id)
+    .limit(1);
+
+  if(perfiles?.[0]){
+    $('f-manual').value    = perfiles[0].manual    || '';
+    $('f-oferta').value    = perfiles[0].oferta    || '';
+    $('f-encuesta').value  = perfiles[0].encuesta  || '';
+    $('f-fundacion').value = perfiles[0].fundacion || '';
   }
 }
 
@@ -790,16 +890,25 @@ async function guardarIdentidad(){
   $('setup-msg').textContent = 'Guardando…';
 
   try{
-    const { res, datos } = await api('/api/perfil', {
-      method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(cuerpo),
-    });
+    // Upsert: si existe el perfil lo actualiza, si no lo crea
+    const { data: existentes } = await sb.from('perfiles')
+      .select('cliente_id')
+      .eq('cliente_id', CLIENTE.id)
+      .limit(1);
 
-    if(res.ok){ $('setup-msg').textContent = ''; entrarDash(); return; }
-    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-    $('setup-msg').textContent = '⚠️ ' + (datos?.message || 'No pudimos guardar. Probá de nuevo.');
+    if(existentes?.length){
+      await sb.from('perfiles')
+        .update({ ...cuerpo, actualizado_en: new Date().toISOString() })
+        .eq('cliente_id', CLIENTE.id);
+    } else {
+      await sb.from('perfiles')
+        .insert({ cliente_id: CLIENTE.id, ...cuerpo });
+    }
+
+    $('setup-msg').textContent = '';
+    entrarDash();
   }catch(e){
-    $('setup-msg').textContent = '⚠️ Sin conexión. Revisá tu internet.';
+    $('setup-msg').textContent = '⚠️ No pudimos guardar. Probá de nuevo.';
   }finally{
     $('btn-guardar').disabled = false;
   }
@@ -832,39 +941,50 @@ async function cargarHistorial(){
   if(CHAT_CARGADO) return;
   CHAT_CARGADO = true;
 
-  let datos = null;
-  try{ ({ datos } = await api('/api/chat')); }
-  catch(e){ return; }   // sin historial la app arranca en blanco y funciona igual
+  try{
+    // Busca la conversación más reciente
+    const { data: convs } = await sb.from('conversaciones')
+      .select('id')
+      .eq('cliente_id', CLIENTE.id)
+      .order('actualizado_en', { ascending: false })
+      .limit(1);
 
-  const mensajes = datos?.mensajes;
-  if(!Array.isArray(mensajes) || mensajes.length === 0) return;
+    if(!convs || convs.length === 0) return;
 
-  for(const m of mensajes){
-    addMsg(m.role === 'user' ? 'user' : 'bot', m.content, m.role === 'user' ? null : 'Synoma');
-  }
-  scrollDown();
+    const { data: mensajes } = await sb.from('mensajes')
+      .select('rol, contenido')
+      .eq('conversacion_id', convs[0].id)
+      .order('creado_en', { ascending: true })
+      .limit(60);
+
+    if(!mensajes || mensajes.length === 0) return;
+
+    for(const m of mensajes){
+      addMsg(m.rol === 'user' ? 'user' : 'bot', m.contenido, m.rol === 'user' ? null : 'Synoma');
+    }
+    scrollDown();
+  }catch(e){ /* sin historial la app arranca en blanco */ }
 }
 
 async function borrarHistorial(){
   if(!confirm('¿Borrar toda tu conversación con Synoma?\n\nTu identidad y tu Fundación NO se borran: seguís teniendo todo cargado. Solo se borra el chat, y no se puede recuperar.')) return;
 
   try{
-    const { res, datos } = await api('/api/chat', { method:'DELETE' });
-    if(!res.ok){
-      if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-      alert(datos?.message || 'No pudimos borrar el historial. Probá de nuevo.');
-      return;
-    }
-  }catch(e){
-    alert('Sin conexión. Revisá tu internet.');
-    return;
-  }
+    const { data: convs } = await sb.from('conversaciones')
+      .select('id')
+      .eq('cliente_id', CLIENTE.id);
 
-  // Se limpia la pantalla recién cuando el servidor confirmó el borrado: si se
-  // limpiara antes, un fallo dejaría al cliente creyendo que borró algo que
-  // sigue guardado.
-  $('msgs').replaceChildren();
-  addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tu Fundación siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
+    if(convs && convs.length){
+      for(const c of convs){
+        await sb.from('conversaciones').delete().eq('id', c.id);
+      }
+    }
+
+    $('msgs').replaceChildren();
+    addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tu Fundación siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
+  }catch(e){
+    alert('No pudimos borrar el historial. Probá de nuevo.');
+  }
 }
 
 /* =============================================================================
@@ -888,20 +1008,25 @@ async function abrirBiblioteca(){
   $('biblioteca-vacia').hidden = false;
   $('biblioteca-vacia').textContent = 'Abriendo tu biblioteca…';
 
-  let res, datos;
-  try{ ({ res, datos } = await api('/api/biblioteca')); }
-  catch(e){ $('biblioteca-vacia').textContent = '⚠️ Sin conexión. Revisá tu internet.'; return; }
+  try{
+    const { data: piezas, error } = await sb.from('piezas')
+      .select('id, tipo, titulo, contenido, estado, creado_en, publicado_en')
+      .eq('cliente_id', CLIENTE.id)
+      .order('creado_en', { ascending: false });
 
-  if(!res.ok){
-    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-    $('biblioteca-vacia').textContent = '⚠️ ' + (datos?.message || 'No pudimos abrir tu biblioteca.');
-    return;
+    if(error) throw error;
+
+    PIEZAS = piezas || [];
+    ETIQUETAS = {
+      plan: 'Plan semanal', idea: 'Ideas', guion: 'Guion', gancho: 'Ganchos',
+      historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
+      reciclado: 'Contenido reciclado', revision: 'Revisión', otro: 'Contenido',
+    };
+    pintarFiltros();
+    pintarGrilla();
+  }catch(e){
+    $('biblioteca-vacia').textContent = '⚠️ No pudimos abrir tu biblioteca. Probá de nuevo.';
   }
-
-  PIEZAS = datos.piezas || [];
-  ETIQUETAS = datos.etiquetas || {};
-  pintarFiltros();
-  pintarGrilla();
 }
 
 function volverAlChat(){ show('view-dash'); }
@@ -1044,35 +1169,30 @@ async function copiar(texto, boton){
 }
 
 async function avanzarEstado(id, estado){
-  const { res, datos } = await api('/api/biblioteca', {
-    method:'PATCH', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ id, estado }),
-  });
-  if(!res.ok){
-    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-    alert(datos?.message || 'No pudimos actualizarla.');
-    return;
+  try{
+    const body = { estado };
+    if(estado === 'publicada') body.publicado_en = new Date().toISOString();
+    await sb.from('piezas').update(body).eq('id', id);
+    const pieza = PIEZAS.find(p => p.id === id);
+    if(pieza){ pieza.estado = estado; if(estado === 'publicada') pieza.publicado_en = body.publicado_en; }
+    pintarFiltros();
+    pintarGrilla();
+  }catch(e){
+    alert('No pudimos actualizarla. Probá de nuevo.');
   }
-  // Se actualiza en memoria con lo que confirmó el servidor, no con lo que
-  // supusimos: si el estado se guardó distinto, la pantalla lo refleja.
-  const pieza = PIEZAS.find(p => p.id === id);
-  if(pieza){ pieza.estado = datos.pieza.estado; pieza.publicado_en = datos.pieza.publicado_en; }
-  pintarFiltros();
-  pintarGrilla();
 }
 
 async function borrarPiezaUI(p){
   if(!confirm(`¿Borrar "${p.titulo || 'esta pieza'}"?\n\nNo se puede recuperar. Si solo querés sacarla de la vista, usá Archivar.`)) return;
 
-  const { res, datos } = await api('/api/biblioteca?id=' + encodeURIComponent(p.id), { method:'DELETE' });
-  if(!res.ok){
-    if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-    alert(datos?.message || 'No pudimos borrarla.');
-    return;
+  try{
+    await sb.from('piezas').delete().eq('id', p.id);
+    PIEZAS = PIEZAS.filter(x => x.id !== p.id);
+    pintarFiltros();
+    pintarGrilla();
+  }catch(e){
+    alert('No pudimos borrarla. Probá de nuevo.');
   }
-  PIEZAS = PIEZAS.filter(x => x.id !== p.id);
-  pintarFiltros();
-  pintarGrilla();
 }
 
 // Aviso bajo la burbuja cuando el servidor confirmó que la pieza quedó guardada.
@@ -1117,17 +1237,22 @@ async function abrirCalendario(piezaId){
   modal.classList.add('on');
   document.body.style.overflow = 'hidden';
 
-  let res, datos;
-  try{ ({ res, datos } = await api('/api/plan?id=' + encodeURIComponent(piezaId))); }
-  catch(e){ $('cal-sub').textContent = '⚠️ Sin conexión. Revisá tu internet.'; return; }
+  try{
+    const { data: piezas } = await sb.from('piezas')
+      .select('contenido, titulo')
+      .eq('id', piezaId)
+      .limit(1);
 
-  if(!res.ok){
-    if(datos?.error === 'sin_sesion'){ cerrarCalendario(); volverAlLogin(datos.message); return; }
-    $('cal-sub').textContent = '⚠️ ' + (datos?.message || 'No pudimos armar el calendario.');
-    return;
+    if(!piezas?.[0]){
+      $('cal-sub').textContent = '⚠️ No encontramos esa pieza.';
+      return;
+    }
+
+    const plan = parsearPlan(piezas[0].contenido || '', piezas[0].titulo);
+    pintarCalendario(plan, piezaId);
+  }catch(e){
+    $('cal-sub').textContent = '⚠️ No pudimos armar el calendario.';
   }
-
-  pintarCalendario(datos.plan, piezaId);
 }
 
 function cerrarCalendario(){
@@ -1210,22 +1335,22 @@ function pintarCalendario(plan, piezaId){
     grilla.appendChild(dia);
   }
 
-  // Enlaces normales, no fetch: así el navegador maneja la descarga como
-  // descarga. En el iPhone, tocar el .ics abre directamente "agregar al
-  // calendario" en vez de mostrar el archivo como texto.
+  // Las descargas se generan en el navegador con Blob: no necesitan servidor.
   const desc = $('cal-descargas');
   desc.replaceChildren();
 
   const ics = document.createElement('a');
   ics.className = 'descarga';
-  ics.href = '/api/plan?id=' + encodeURIComponent(piezaId) + '&formato=ics';
   ics.textContent = '📅 Agregar a mi calendario';
+  ics.href = URL.createObjectURL(new Blob([generarICS(plan)], { type: 'text/calendar' }));
+  ics.download = 'plan-synoma.ics';
   desc.appendChild(ics);
 
   const csv = document.createElement('a');
   csv.className = 'descarga claro';
-  csv.href = '/api/plan?id=' + encodeURIComponent(piezaId) + '&formato=csv';
   csv.textContent = '📊 Descargar en Excel';
+  csv.href = URL.createObjectURL(new Blob([generarCSV(plan)], { type: 'text/csv' }));
+  csv.download = 'plan-synoma.csv';
   desc.appendChild(csv);
 
   const nota = document.createElement('small');
@@ -1260,19 +1385,13 @@ async function guardarAMano(texto, boton){
   boton.disabled = true;
   boton.textContent = 'Guardando…';
   try{
-    const { res, datos } = await api('/api/biblioteca', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ contenido: texto, tipo:'otro' }),
-    });
-    if(!res.ok){
-      if(datos?.error === 'sin_sesion'){ volverAlLogin(datos.message); return; }
-      boton.textContent = 'No se pudo';
-      boton.disabled = false;
-      return;
-    }
-    boton.replaceWith(notaGuardada());
+    const { data } = await sb.from('piezas')
+      .insert({ cliente_id: CLIENTE.id, tipo: 'otro', titulo: texto.slice(0, 80), contenido: texto, estado: 'nueva' })
+      .select('id, tipo, titulo')
+      .limit(1);
+    boton.replaceWith(notaGuardada(data?.[0]));
   }catch(e){
-    boton.textContent = 'Sin conexión';
+    boton.textContent = 'No se pudo';
     boton.disabled = false;
   }
 }
@@ -1486,10 +1605,10 @@ async function send(opciones = {}){
     // historial: el servidor sabe quién es por la cookie y lee lo demás de la
     // base. Antes iba todo desde el navegador, así que un localStorage limpio
     // mandaba un perfil vacío y Synoma escribía genérico en silencio.
-    const res = await fetch('/api/synoma', {
-      method:'POST', credentials:'same-origin',
+    const res = await fetch(EDGE_URL, {
+      method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(pieza ? { mensaje: text, continua_pieza: pieza.id } : { mensaje: text }),
+      body: JSON.stringify(pieza ? { cliente_id: CLIENTE.id, mensaje: text, continua_pieza: pieza.id } : { cliente_id: CLIENTE.id, mensaje: text }),
     });
 
     if(!res.ok){
@@ -1625,8 +1744,8 @@ function handleSendError(err, body, acc){
 
   // La sesión venció: se vuelve al login en lugar de dejarlo reintentando algo
   // que nunca va a funcionar.
-  if(code === 'sin_sesion'){ volverAlLogin(message); return; }
-  if(code === 'acceso_terminado'){ show('view-login'); mostrarRenovacion(err.datos || {message}); return; }
+  if(code === 'sin_sesion' || code === 'missing_data'){ volverAlLogin(message || 'Tu sesión venció. Volvé a entrar.'); return; }
+  if(code === 'acceso_terminado'){ show('view-login'); mostrarRenovacion({message}); return; }
 
   // Falta cargar la identidad: se lo lleva a la pantalla donde se resuelve.
   if(code === 'sin_perfil'){
@@ -1702,17 +1821,122 @@ $('codigo-input').addEventListener('input', e=>{
 (async function boot(){
   mountVideos();
   pintarAnclas();
+
+  const sesion = leerSesionLocal();
+  if(!sesion) return;
+
+  CLIENTE = sesion.cliente;
+
+  // Valida que el cliente siga activo
   try{
-    const { datos } = await api('/api/auth/sesion');
-    if(datos?.config){ CONFIG = datos.config; pintarAnclas(); }
-    if(datos?.sesion){
-      CLIENTE = { email: datos.sesion.email, nombre: datos.sesion.nombre };
-      if(datos.sesion.perfil_cargado){ entrarDash(); } else { await abrirIdentidad(); }
+    const { data: clientes } = await sb.from('clientes')
+      .select('id, email, nombre, acceso')
+      .eq('id', CLIENTE.id)
+      .limit(1);
+
+    if(!clientes?.[0] || clientes[0].acceso === 'suspendido'){
+      borrarSesionLocal();
+      mostrarRenovacion({ message: 'Tu acceso a Synoma terminó.' });
       return;
     }
-    if(datos?.motivo === 'acceso_terminado'){ mostrarRenovacion(datos); }
-  }catch(e){ /* sin sesión: queda la pantalla de login */ }
+
+    CLIENTE = { email: clientes[0].email, nombre: clientes[0].nombre, id: clientes[0].id };
+
+    const { data: perfiles } = await sb.from('perfiles')
+      .select('oferta')
+      .eq('cliente_id', CLIENTE.id)
+      .limit(1);
+
+    if(perfiles?.[0]?.oferta?.trim()){
+      entrarDash();
+    } else {
+      await abrirIdentidad();
+    }
+  }catch(e){ /* sin sesión válida: queda en login */ }
 })();
+
+/* =============================================================================
+   Parser del plan semanal y generadores de ICS/CSV (client-side)
+   ============================================================================= */
+function parsearPlan(texto, titulo){
+  const lineas = texto.split('\n');
+  const dias = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const piezas = [];
+
+  for(const linea of lineas){
+    if(!linea.startsWith('|')) continue;
+    const celdas = linea.split('|').map(c => c.trim()).filter(Boolean);
+    if(celdas.length < 2) continue;
+    if(celdas[0] === 'Día' || celdas[0].toLowerCase() === 'dia') continue;
+
+    const dia = celdas[0];
+    if(!dias.includes(dia)) continue;
+
+    piezas.push({
+      dia,
+      fecha: fechaParaDia(dia),
+      pilar: celdas[1] || '',
+      formato: celdas[2] || '',
+      dolor: celdas[3] || '',
+      gancho: celdas[4] || '',
+      punteo: (celdas[5] || '').split(' · ').filter(Boolean),
+      intencion: (celdas[6] || '').toLowerCase().includes('venta') ? 'venta' : 'educativa',
+      tiempo: celdas[7] || '',
+    });
+  }
+
+  return { titulo: titulo || 'Mi semana de contenido', piezas };
+}
+
+function fechaParaDia(diaCorto){
+  const dias = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const idx = dias.indexOf(diaCorto);
+  if(idx < 0) return '';
+  const hoy = new Date();
+  const diaSemana = hoy.getDay() === 0 ? 7 : hoy.getDay();
+  const diff = idx - (diaSemana - 1);
+  const fecha = new Date(hoy);
+  fecha.setDate(hoy.getDate() + (diff >= 0 ? diff : diff + 7));
+  return fecha.toISOString().slice(0, 10);
+}
+
+function generarICS(plan){
+  let out = ['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Synoma//Founders//ES'];
+  for(const p of plan.piezas){
+    if(!p.fecha) continue;
+    const dt = p.fecha.replace(/-/g,'');
+    out.push('BEGIN:VEVENT');
+    out.push('UID:' + dt + '-' + p.dia + '@synoma');
+    out.push('DTSTART:' + dt + 'T090000');
+    out.push('DTEND:' + dt + 'T093000');
+    out.push('SUMMARY:' + (p.gancho || p.dia + ' - ' + p.pilar));
+    out.push('DESCRIPTION:' + [p.pilar, p.dolor, p.punteo.join(' · '), p.intencion, p.tiempo].filter(Boolean).join('\\n'));
+    out.push('END:VEVENT');
+  }
+  out.push('END:VCALENDAR');
+  return out.join('\r\n');
+}
+
+function generarCSV(plan){
+  const head = ['Día','Fecha','Pilar','Formato','Dolor','Gancho','Punteo','Intención','Tiempo'];
+  const rows = [head.join(',')];
+  for(const p of plan.piezas){
+    rows.push([p.dia, p.fecha, p.pilar, p.formato, p.dolor, p.gancho, p.punteo.join(' · '), p.intencion, p.tiempo].map(c => '"' + String(c).replace(/"/g,'""') + '"').join(','));
+  }
+  return rows.join('\n');
+}
+
+/* =============================================================================
+   Exponer funciones al scope global para que los onclick del HTML funcionen
+   con <script type="module">
+   ============================================================================= */
+Object.assign(window, {
+  pedirCodigo, confirmarCodigo, volverAEmail, guardarIdentidad,
+  abrirBiblioteca, abrirIdentidad, borrarHistorial, salir,
+  runCmd, askCmd, send, volverAlChat, cerrarCalendario,
+  avanzarEstado, borrarPiezaUI, abrirCalendario,
+  guardarAMano,
+});
 </script>
 </body>
 </html>
