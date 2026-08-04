@@ -148,6 +148,7 @@ async function loadHandler(env = {}, db = fakeDb()) {
   process.env.MONEDA = env.MONEDA ?? '';
   process.env.SYNOMA_MAX_TOKENS = env.SYNOMA_MAX_TOKENS ?? '';
   process.env.SYNOMA_MS_REINTENTO = env.SYNOMA_MS_REINTENTO ?? '';
+  process.env.SYNOMA_DEADLINE_MS = env.SYNOMA_DEADLINE_MS ?? '';
   usarSqlDePrueba(db);
   const mod = await import('../netlify/functions/synoma.js?t=' + Math.random());
   return mod.default;
@@ -696,6 +697,113 @@ test('la respuesta cortada se guarda igual, y se informa cuánto tardó', async 
   assert.equal(db.piezaGuardada()?.contenido, 'media tabla');
 });
 
+// --- el corte por tiempo ----------------------------------------------------
+// Netlify corta la función a los 10 s (26-30 si te lo subieron) y un plan semanal
+// completo tarda más que eso. La diferencia entre cortar nosotros y que corte
+// Netlify es total: nosotros dejamos el texto que llegó, guardado y con el resto
+// pedible; Netlify devuelve un 504 en el que se pierde todo y que ni es JSON.
+
+// Stream que manda un fragmento y después se queda colgado: simula una respuesta
+// que va a tardar más que el presupuesto.
+function sseLento(fragmentos, msEntreFragmentos) {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(c) {
+      c.enqueue(encoder.encode(`event: message_start\ndata: ${JSON.stringify({ type: 'message_start', message: { usage: { input_tokens: 10 } } })}\n\n`));
+      for (const t of fragmentos) {
+        c.enqueue(encoder.encode(`event: content_block_delta\ndata: ${JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text: t } })}\n\n`));
+        await new Promise((r) => setTimeout(r, msEntreFragmentos));
+      }
+      c.enqueue(encoder.encode(`event: message_stop\ndata: ${JSON.stringify({ type: 'message_stop' })}\n\n`));
+      c.close();
+    },
+  });
+}
+
+test('se corta por tiempo antes de que corte Netlify, y se marca como truncada', async () => {
+  globalThis.fetch = async () => new Response(sseLento(['uno ', 'dos ', 'tres ', 'cuatro '], 40), { status: 200 });
+  const handler = await loadHandler({ SYNOMA_DEADLINE_MS: '60' });
+  const eventos = await readNdjson(await handler(post({ mensaje: '/semana' })));
+
+  const done = eventos.at(-1);
+  assert.equal(done.type, 'done', 'no es un error: hay texto válido en pantalla');
+  assert.equal(done.truncada, true);
+  assert.equal(done.motivo_corte, 'tiempo');
+  // El texto que alcanzó a llegar se conserva.
+  const texto = eventos.filter((e) => e.type === 'text').map((e) => e.text).join('');
+  assert.ok(texto.startsWith('uno'), `se perdió el texto: ${JSON.stringify(texto)}`);
+});
+
+test('lo que llegó antes del corte por tiempo se guarda', async () => {
+  globalThis.fetch = async () => new Response(sseLento(['principio ', 'medio ', 'final '], 40), { status: 200 });
+  const db = fakeDb();
+  const handler = await loadHandler({ SYNOMA_DEADLINE_MS: '60' }, db);
+  await readNdjson(await handler(post({ mensaje: '/semana' })));
+  await new Promise((r) => setTimeout(r, 30));
+
+  assert.ok(db.turnoGuardado()?.respuesta.startsWith('principio'));
+  assert.ok(db.piezaGuardada(), 'la pieza tiene que quedar, aunque esté a medias');
+});
+
+test('una respuesta que entra en el tiempo no se marca como truncada', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody(['todo completo']) });
+  const handler = await loadHandler({ SYNOMA_DEADLINE_MS: '5000' });
+  const eventos = await readNdjson(await handler(post(VALID)));
+  assert.equal(eventos.at(-1).truncada, false);
+  assert.equal(eventos.at(-1).motivo_corte, null);
+});
+
+test('se manda un ping de entrada para abrir las cabeceras HTTP', async () => {
+  // Si el modelo tarda en arrancar, sin este byte Netlify puede matar la función
+  // antes de mandar una sola cabecera: entonces reemplaza todo por un 504 en HTML
+  // y el navegador no puede leer ni el código. Con la conexión abierta, lo peor
+  // que pasa es perder el final.
+  globalThis.fetch = fakeFetch();
+  const handler = await loadHandler();
+  const eventos = await readNdjson(await handler(post(VALID)));
+  assert.equal(eventos[0].type, 'ping');
+});
+
+test('el done informa cuánto tardó la primera palabra', async () => {
+  // Se mide aparte porque no se arregla igual: si lo que se come el presupuesto es
+  // el arranque, el problema es el tamaño del prompt, no cuánto escribe el modelo.
+  globalThis.fetch = fakeFetch();
+  const handler = await loadHandler();
+  const eventos = await readNdjson(await handler(post(VALID)));
+  assert.equal(typeof eventos.at(-1).ttft_ms, 'number');
+});
+
+// --- continuar una respuesta cortada ----------------------------------------
+
+test('la continuación se le pega a la MISMA pieza, no crea una nueva', async () => {
+  globalThis.fetch = fakeFetch({ body: sseBody([' y el resto del plan']) });
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  await readNdjson(await handler(post({
+    mensaje: 'seguí desde donde te cortaste',
+    continua_pieza: '11111111-2222-3333-4444-555555555555',
+  })));
+  await new Promise((r) => setTimeout(r, 20));
+
+  // Sin esto la biblioteca quedaría con "Plan semanal (1 de 3)", "(2 de 3)"… en
+  // lugar de un plan.
+  assert.equal(db.piezaGuardada(), null, 'no debería crear una pieza nueva');
+  const update = db.consultas.find((c) => c.includes('UPDATE piezas'));
+  assert.ok(update, 'debería ampliar la pieza existente');
+  assert.ok(update.includes('contenido ||'), 'el texto se agrega, no se reemplaza');
+});
+
+test('un id de pieza mal armado se ignora en vez de romper la consulta', async () => {
+  globalThis.fetch = fakeFetch();
+  const db = fakeDb();
+  const handler = await loadHandler({}, db);
+  await readNdjson(await handler(post({ mensaje: '/semana', continua_pieza: 'no-es-uuid' })));
+  await new Promise((r) => setTimeout(r, 20));
+
+  assert.ok(!db.consultas.some((c) => c.includes('UPDATE piezas')));
+  assert.ok(db.piezaGuardada(), 'se comporta como un pedido normal');
+});
+
 // --- la fecha ---------------------------------------------------------------
 
 test('el modelo recibe la fecha de hoy', async () => {
@@ -893,5 +1001,18 @@ test('usa claude-sonnet-5', async () => {
   const handler = await loadHandler();
   await handler(post(VALID));
   assert.equal(spy.calls[0].payload.model, 'claude-sonnet-5');
-  assert.equal(spy.calls[0].payload.max_tokens, 2200);
+});
+
+test('el tope de tokens entra en la ventana de tiempo de Netlify', async () => {
+  const spy = fakeFetch();
+  globalThis.fetch = spy;
+  const handler = await loadHandler();
+  await handler(post(VALID));
+
+  // La cuenta que hay que hacer: Claude escribe a ~60-80 tokens por segundo. Con
+  // el tope de 10 s de Netlify, más de ~1.000 tokens no entran, y el resultado es
+  // un 504 en el que se pierde todo. Las respuestas largas se arman con varios
+  // tramos, no con un max_tokens grande.
+  const tokens = spy.calls[0].payload.max_tokens;
+  assert.ok(tokens <= 1000, `${tokens} tokens son ~${Math.round(tokens / 60)} s: no entran`);
 });

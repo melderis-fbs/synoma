@@ -29,21 +29,38 @@ import { urlDeBase } from './_db.js';
 import { configPublica } from './_config.js';
 import { leerPerfil, bloqueDePerfil, mensajesDeHoy, registrarUso } from './_perfil.js';
 import { historial, paraElModelo, guardarTurno, MENSAJES_CONTEXTO } from './_conversacion.js';
-import { guardarSiEsPieza, resumenParaRacha, bloqueDeRacha } from './_biblioteca.js';
+import { guardarSiEsPieza, ampliarPieza, resumenParaRacha, bloqueDeRacha } from './_biblioteca.js';
 
 const MODEL = 'claude-sonnet-5';
 // Cuánto puede escribir Claude en una respuesta.
 //
-// Esto NO es un presupuesto de dinero (se paga lo que escribe, no el tope), es un
-// presupuesto de TIEMPO: Netlify corta la función a los 10 s (26-30 s en los
-// planes pagos) y el streaming no exime de ese tope, porque cuenta la duración
-// total de la invocación. A ~60-80 tokens por segundo, 26 s son unos 2.000
-// tokens. Por eso el tope está donde está: subirlo no arregla nada, solo cambia
-// "se cortó por largo" (recuperable, se puede continuar) por "se cortó la
-// conexión" (se pierde el resto).
-// Se puede bajar desde Netlify sin tocar código: si /semana sigue cortándose,
-// SYNOMA_MAX_TOKENS=1600 y listo, sin esperar un deploy.
-const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 2200;
+// Esto NO es un presupuesto de dinero (se paga lo que escribe, no el tope): es un
+// presupuesto de TIEMPO. Netlify corta la función a los 10 s (26-30 s si te lo
+// subieron) y el streaming no exime de ese tope, porque cuenta la duración total
+// de la invocación.
+//
+// El número por defecto sale de una cuenta que hay que hacer y no de un gusto:
+// Claude escribe a ~60-80 tokens por segundo, así que 900 tokens son unos 12
+// segundos de generación. Con el tope de 10 s de Netlify (26-30 s si te lo
+// subieron) eso entra. 2.200 tokens serían 37 segundos: NO entran, y el resultado
+// es un 504 en el que se pierde todo.
+//
+// Que sea chico no acorta las respuestas: cuando una se corta, el navegador pide
+// la continuación solo y la pega en la misma burbuja (ver `truncada`). El cliente
+// ve una respuesta larga; abajo son varios pedidos cortos, cada uno dentro del
+// tope.
+const MAX_TOKENS = Number(process.env.SYNOMA_MAX_TOKENS) || 900;
+
+// Cuándo cortar por nuestra cuenta, antes de que corte Netlify.
+//
+// Es la diferencia entre dos finales muy distintos para el cliente:
+//   · Nosotros cortamos → tiene el texto que llegó, queda guardado, y sigue solo.
+//   · Corta Netlify → 504, se pierde TODO, y ni siquiera es JSON.
+//
+// El valor por defecto es conservador porque no sabemos si el sitio tiene el tope
+// de 10 s o el de 26. Si te lo subieron a 26, poné SYNOMA_DEADLINE_MS=22000: van a
+// hacer falta menos vueltas y todo va a salir más rápido.
+const DEADLINE_MS = Number(process.env.SYNOMA_DEADLINE_MS) || 8500;
 
 // Hasta cuándo se puede reintentar una respuesta vacía.
 //
@@ -141,6 +158,15 @@ const manejar = async (req) => {
     return fail(400, 'no_messages', 'No llegó ningún mensaje.', cors);
   }
 
+  // Si el navegador está pidiendo la continuación de una respuesta que se cortó,
+  // manda el id de la pieza para que el texto se le pegue a esa y no cree una
+  // nueva. Se valida la forma acá: un id mal armado hace que Postgres devuelva un
+  // error de sintaxis, que llegaría al cliente como "la base falló".
+  const continuaPieza = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    .test(String(payload?.continua_pieza ?? '').trim())
+    ? String(payload.continua_pieza).trim()
+    : null;
+
   // --- Tope de uso por cliente y por día -----------------------------------
   const limit = Number(process.env.SYNOMA_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
   try {
@@ -228,7 +254,7 @@ const manejar = async (req) => {
     apiKey: process.env.ANTHROPIC_API_KEY, system, messages: trimmed,
   });
 
-  return new Response(toNdjson(upstream.body, cliente, pregunta, reintentar, inicioPedido), {
+  return new Response(toNdjson(upstream.body, cliente, pregunta, reintentar, inicioPedido, continuaPieza), {
     status: 200,
     headers: {
       ...cors,
@@ -292,7 +318,7 @@ async function callClaude({ apiKey, system, messages, attempt = 0 }) {
 //   {"type":"text","text":"..."}                    fragmento de texto
 //   {"type":"done","usage":{...}}                   terminó bien
 //   {"type":"error","error":"...","message":"..."}  falló a mitad de camino
-function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Date.now()) {
+function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Date.now(), continuaPieza = null) {
   const encoder = new TextEncoder();
 
   return new ReadableStream({
@@ -317,6 +343,7 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
       // no hay forma de distinguir "el modelo no escribió nada" de "el stream vino
       // con una forma que no sabemos leer".
       let tipos = new Set();
+      let msHastaPrimerToken = null;
       const arranque = inicioPedido;
 
       // Guardar el turno pasa DESPUÉS de cerrar el stream y sin await: el
@@ -329,14 +356,33 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           console.error('[synoma] no se pudo guardar el turno:', e?.message ?? e));
       };
 
+      // Un byte de entrada, antes de esperar nada.
+      //
+      // Sirve para que la plataforma mande las cabeceras HTTP al navegador YA, sin
+      // esperar la primera palabra de Claude. Sin esto, si el modelo tarda en
+      // arrancar (y tarda más cuanto más grande es el prompt), Netlify puede matar
+      // la función antes de haber mandado una sola cabecera: entonces reemplaza
+      // toda la respuesta por un 504 en HTML y el navegador no puede leer nada.
+      // Con la conexión ya abierta, lo peor que puede pasar es perder el final.
+      emit({ type: 'ping' });
+
       // Lee un stream de la API de punta a punta, emitiendo el texto a medida que
-      // llega. Devuelve 'error' si el propio stream reportó una falla.
+      // llega. Devuelve 'error' si el stream reportó una falla, 'tiempo' si nos
+      // quedamos sin presupuesto, o 'fin' si terminó.
       const bombear = async (cuerpo) => {
         const reader = cuerpo.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
 
         while (true) {
+          // Cortamos NOSOTROS antes de que corte Netlify. Cortar acá deja al
+          // cliente con el texto que llegó, guardado y con posibilidad de seguir;
+          // que corte Netlify es un 504 en el que se pierde todo.
+          if (emittedText && Date.now() - inicioPedido > DEADLINE_MS) {
+            reader.cancel().catch(() => {});
+            return 'tiempo';
+          }
+
           const { value, done } = await reader.read();
           if (done) break;
 
@@ -354,6 +400,10 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
             tipos.add(ev.type === 'content_block_delta' ? `delta:${ev.delta?.type}` : ev.type);
 
             if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
+              // El tiempo hasta la PRIMERA palabra se mide aparte porque no se
+              // arregla igual que el resto: depende del tamaño del prompt y de si
+              // el caché pegó, no de cuánto escribe el modelo.
+              if (!emittedText) msHastaPrimerToken = Date.now() - inicioPedido;
               emittedText = true;
               respuesta += ev.delta.text;
               emit({ type: 'text', text: ev.delta.text });
@@ -403,6 +453,8 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           }
         }
 
+        // 'tiempo' NO es un error: hay texto válido en pantalla. Sigue por el
+        // camino normal y se marca como truncada, para que el front pida el resto.
         if (resultado === 'error') {
           emit({
             type: 'error',
@@ -445,7 +497,9 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           // INSERT y el texto ya salió completo, así que no demora nada visible.
           let pieza = null;
           try {
-            pieza = await guardarSiEsPieza(cliente.id, pregunta, respuesta);
+            pieza = continuaPieza
+              ? await ampliarPieza(cliente.id, continuaPieza, respuesta)
+              : await guardarSiEsPieza(cliente.id, pregunta, respuesta);
           } catch (e) {
             console.error('[synoma] no se pudo guardar la pieza:', e?.message ?? e);
           }
@@ -455,19 +509,29 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           // tope de tiempo de Netlify", que se ven igual desde el navegador y se
           // arreglan de forma distinta.
           const duracion = Date.now() - arranque;
-          if (stopReason && stopReason !== 'end_turn') {
-            console.warn(`[synoma] respuesta incompleta: stop_reason=${stopReason} duracion=${duracion}ms `
+          const porTiempo = resultado === 'tiempo';
+          const truncada = porTiempo || stopReason === 'max_tokens';
+
+          // El desglose importa: si lo que se come el presupuesto es el tiempo
+          // hasta la primera palabra, el problema es el tamaño del prompt (o que
+          // el caché no pegó) y no cuánto escribe el modelo. Son arreglos
+          // distintos y desde el navegador se ven igual.
+          const reloj = `ttft=${msHastaPrimerToken ?? '?'}ms total=${duracion}ms`;
+          if (truncada) {
+            console.warn(`[synoma] cortada por ${porTiempo ? 'TIEMPO' : 'tokens'}: ${reloj} `
               + `caracteres=${respuesta.length} comando=${(pregunta.match(/^\/\S+/) ?? [''])[0]}`);
           } else {
-            console.log(`[synoma] ok en ${duracion}ms, ${respuesta.length} caracteres`);
+            console.log(`[synoma] ok · ${reloj} · ${respuesta.length} caracteres`);
           }
 
           emit({
             type: 'done',
             usage,
             duracion_ms: duracion,
-            // El front usa esto para mostrar el aviso y el botón de continuar.
-            truncada: stopReason === 'max_tokens',
+            ttft_ms: msHastaPrimerToken,
+            // El front usa esto para pedir la continuación solo.
+            truncada,
+            motivo_corte: truncada ? (porTiempo ? 'tiempo' : 'tokens') : null,
             pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null,
           });
           persistir();

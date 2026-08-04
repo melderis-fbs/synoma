@@ -146,6 +146,22 @@
   .guardada-nota button{background:none;border:none;color:var(--beige-d);font-weight:700;font-size:11.5px;
     cursor:pointer;text-decoration:underline;font-family:'Inter',sans-serif;padding:0}
 
+  /* ---------- TARJETA DE "LISTO" ---------- */
+  /* El contenido terminado no se deja como un muro de texto en el chat: queda
+     una tarjeta que lleva a la biblioteca. El texto está a un toque. */
+  .tarjeta-listo{display:flex;flex-direction:column;gap:4px}
+  .tl-cab{font-size:9.5px;letter-spacing:.2em;text-transform:uppercase;font-weight:800;color:var(--beige-d)}
+  .tl-tit{font-size:16.5px;font-weight:800;color:var(--black);line-height:1.35;letter-spacing:-.01em;margin-top:2px}
+  .tl-sub{font-size:13px;color:var(--muted);line-height:1.55;margin-top:2px}
+  .tl-acciones{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+  .tl-btn{background:var(--black);border:none;border-radius:99px;padding:10px 18px;color:#fff;font-size:12.5px;
+    font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
+  .tl-btn:hover{opacity:.85}
+  .tl-btn.claro{background:var(--bg);color:var(--ink);border:1px solid var(--border)}
+  .tl-btn.plano{background:none;color:var(--muted);padding:10px 6px;text-decoration:underline;font-weight:600}
+  .tl-aviso{margin-top:12px;padding:9px 12px;background:#FFF7E8;border:1px solid #EAD9B0;border-radius:9px;
+    font-size:12px;color:#8A7440;line-height:1.5}
+
   /* ---------- CALENDARIO ---------- */
   .modal{position:fixed;inset:0;background:rgba(17,17,17,.62);z-index:100;display:none;overflow-y:auto;padding:24px 14px}
   .modal.on{display:block}
@@ -1300,20 +1316,123 @@ function errorNote(message){
   return n;
 }
 
-// La respuesta llegó completa hasta donde el modelo pudo escribir, pero se cortó.
-// El botón le pide seguir desde donde quedó: como el historial vive en el
-// servidor, Synoma sabe exactamente dónde se cortó sin tener que repetir nada.
-function avisoDeCorte(){
+/* La tarjeta de "listo".
+   ---------------------------------------------------------------------------
+   Cuando el contenido terminó y quedó guardado, la burbuja del chat se convierte
+   en una tarjeta corta que lleva a la biblioteca, en lugar de dejar el texto
+   completo ahí. Dos razones:
+
+   · Con cinco comandos en una sesión, el chat serían cinco paredes de texto y
+     encontrar algo sería imposible. Ese es exactamente el problema que la
+     biblioteca resuelve; dejar el muro además de guardarlo es no resolverlo.
+   · La forma útil de un plan semanal no es el texto: es el calendario. La tarjeta
+     lleva directo ahí.
+
+   El texto no se pierde: queda a un toque, en "Ver el texto acá". */
+
+const EMOJI_TIPO = {
+  plan: '📅', idea: '💡', guion: '🎬', gancho: '🪝', historia: '📱',
+  venta: '🔥', post: '📝', reciclado: '♻️', revision: '🔍', otro: '📄',
+};
+
+const NOMBRE_TIPO = {
+  plan: 'Plan semanal', idea: 'Ideas', guion: 'Guion', gancho: 'Ganchos',
+  historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
+  reciclado: 'Contenido reciclado', revision: 'Revisión', otro: 'Contenido',
+};
+
+function mostrarTarjeta(body, pieza, texto, truncada){
+  const tipo = pieza.tipo || 'otro';
+  body.dataset.texto = texto;
+
+  const t = document.createElement('div');
+  t.className = 'tarjeta-listo';
+
+  const cab = document.createElement('div');
+  cab.className = 'tl-cab';
+  cab.textContent = `${EMOJI_TIPO[tipo] || '📄'} ${NOMBRE_TIPO[tipo] || 'Contenido'} · guardado`;
+
+  const tit = document.createElement('div');
+  tit.className = 'tl-tit';
+  tit.textContent = pieza.titulo || NOMBRE_TIPO[tipo] || 'Contenido';
+
+  const sub = document.createElement('div');
+  sub.className = 'tl-sub';
+  sub.textContent = tipo === 'plan'
+    ? 'Está en 📚 Mis contenidos. Miralo como calendario y bajátelo a tu agenda.'
+    : 'Está en 📚 Mis contenidos. Marcalo cuando lo grabes y cuando lo publiques.';
+
+  const acciones = document.createElement('div');
+  acciones.className = 'tl-acciones';
+
+  if(tipo === 'plan'){
+    const cal = document.createElement('button');
+    cal.className = 'tl-btn';
+    cal.textContent = '📅 Ver mi calendario';
+    cal.onclick = () => abrirCalendario(pieza.id);
+    acciones.appendChild(cal);
+  }
+
+  const bib = document.createElement('button');
+  bib.className = 'tl-btn claro';
+  bib.textContent = '📚 Mirá tu biblioteca';
+  bib.onclick = () => abrirBiblioteca();
+  acciones.appendChild(bib);
+
+  const ver = document.createElement('button');
+  ver.className = 'tl-btn plano';
+  ver.textContent = 'Ver el texto acá';
+  ver.onclick = () => {
+    // El texto no se perdió: estaba guardado en el nodo.
+    body.innerHTML = renderLite(body.dataset.texto || '');
+    scrollDown();
+  };
+  acciones.appendChild(ver);
+
+  t.append(cab, tit, sub, acciones);
+
+  if(truncada){
+    const aviso = document.createElement('div');
+    aviso.className = 'tl-aviso';
+    aviso.textContent = '⚠️ Era muy largo y quedó incompleto. Pedile que siga si te falta el final.';
+    t.appendChild(aviso);
+  }
+
+  body.replaceChildren(t);
+}
+
+// Las notas de estado (continuando / cortada / guardada) se reemplazan, no se
+// acumulan: si no, después de tres tramos hay tres avisos apilados debajo de la
+// misma respuesta.
+function limpiarNotas(contenedor){
+  contenedor.querySelectorAll('.corte, .guardada-nota').forEach(n => n.remove());
+}
+
+// Mientras se pide el tramo siguiente. Es una nota discreta a propósito: el
+// cliente no tiene que entender que hubo varios pedidos, solo que sigue viniendo.
+function notaContinuando(tramo){
+  const n = document.createElement('div');
+  n.className = 'guardada-nota';
+  const t = document.createElement('span');
+  t.textContent = `✍️ Sigue escribiendo… (parte ${tramo + 1})`;
+  n.appendChild(t);
+  return n;
+}
+
+// Se agotaron los tramos automáticos y la respuesta sigue sin terminar. Queda el
+// botón manual: como el historial vive en el servidor, Synoma sabe exactamente
+// dónde se cortó sin tener que repetir nada.
+function avisoDeCorte(burbuja, tramo, pieza){
   const n = document.createElement('div');
   n.className = 'corte';
   const t = document.createElement('div');
-  t.textContent = '✂️ Esta respuesta quedó cortada por el largo — no llegó hasta el final.';
+  t.textContent = '✂️ Esta respuesta es muy larga y quedó cortada. Podés pedir el resto.';
   const b = document.createElement('button');
   b.textContent = 'Continuar desde donde quedó →';
   b.onclick = () => {
     b.disabled = true;
-    $('input').value = 'Seguí exactamente desde donde te cortaste, sin repetir nada de lo que ya escribiste y sin volver a presentar.';
-    send();
+    $('input').value = PEDIDO_CONTINUAR;
+    send({ burbuja, tramo: 1, pieza });
   };
   n.append(t, b);
   return n;
@@ -1326,20 +1445,41 @@ function askCmd(cmd, hint){
 }
 function runCmd(cmd){ $('input').value = cmd; send(); }
 
-async function send(){
+/* Continuación automática.
+   ---------------------------------------------------------------------------
+   Netlify corta la función a los 10 segundos (26-30 si te lo subieron), y un plan
+   semanal completo tarda más que eso en escribirse. La salida no es acortar el
+   plan: es partirlo en tramos que sí entran.
+
+   Cuando el servidor avisa que la respuesta quedó cortada (`truncada`), el
+   navegador pide el resto solo y lo pega en la MISMA burbuja. El cliente ve una
+   respuesta larga que va apareciendo; abajo son tres o cuatro pedidos cortos,
+   cada uno dentro del tope. Y como el historial vive en el servidor, la
+   continuación arranca justo donde quedó sin repetir nada.
+
+   El tope de tramos existe para que un modelo que no sabe terminar no genere
+   pedidos para siempre. Al llegar ahí queda el botón manual. */
+const MAX_TRAMOS = 4;
+const PEDIDO_CONTINUAR = 'Seguí exactamente desde donde te cortaste. No repitas nada de lo que ya escribiste, no vuelvas a presentar y no expliques que estás continuando: escribí directamente lo que sigue.';
+
+async function send(opciones = {}){
   if(SENDING) return;                    // evita doble envío con Enter repetido
   const text = $('input').value.trim();
   if(!text) return;
+
+  const { burbuja = null, tramo = 1, pieza = null } = opciones;
 
   SENDING = true;
   ULTIMO_MENSAJE = text;
   $('send-btn').disabled = true;
   $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
-  addMsg('user', text);
+  // En una continuación no se pinta el pedido: el cliente no lo escribió y verlo
+  // rompería la ilusión de una sola respuesta.
+  if(!burbuja) addMsg('user', text);
   $('typing').style.display='block';
 
-  let body = null;   // burbuja de la respuesta; se crea al primer fragmento
-  let acc = '';      // texto acumulado
+  let body = burbuja;   // burbuja de la respuesta; se crea al primer fragmento
+  let acc = burbuja ? burbuja.dataset.texto || '' : '';   // texto acumulado
 
   try{
     // Se manda SOLO la pregunta nueva. Ni el código, ni el perfil, ni el
@@ -1349,7 +1489,7 @@ async function send(){
     const res = await fetch('/api/synoma', {
       method:'POST', credentials:'same-origin',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ mensaje: text }),
+      body: JSON.stringify(pieza ? { mensaje: text, continua_pieza: pieza.id } : { mensaje: text }),
     });
 
     if(!res.ok){
@@ -1381,19 +1521,50 @@ async function send(){
         if(!line.trim()) continue;
         let ev; try{ ev = JSON.parse(line); }catch(e){ continue; }
 
-        if(ev.type === 'text'){
+        if(ev.type === 'ping'){
+          // Solo sirve para que se abran las cabeceras HTTP enseguida. Nada que
+          // mostrar.
+        } else if(ev.type === 'text'){
           if(!body){ $('typing').style.display='none'; body = startMsg('bot','Synoma'); }
           acc += ev.text;
+          // Se guarda en el nodo para que la continuación siga escribiendo encima
+          // del mismo texto en lugar de arrancar de cero.
+          body.dataset.texto = acc;
           body.innerHTML = renderLite(acc);
           scrollDown();
         } else if(ev.type === 'done'){
           // El servidor confirma si la pieza quedó guardada. Si no vino de un
           // comando de contenido, se ofrece el botón para guardarla a mano.
           if(body && acc){
-            body.parentNode.appendChild(ev.pieza ? notaGuardada(ev.pieza) : botonGuardar(acc));
-            // La respuesta se cortó por largo. Antes esto pasaba en silencio: el
-            // cliente se llevaba media tabla creyendo que era todo.
-            if(ev.truncada) body.parentNode.appendChild(avisoDeCorte());
+            // Quedó cortada y todavía quedan tramos: se pide el resto solo, sin
+            // que el cliente tenga que hacer nada. Se limpia la nota anterior para
+            // que no queden avisos apilados.
+            if(ev.truncada && tramo < MAX_TRAMOS){
+              limpiarNotas(body.parentNode);
+              body.parentNode.appendChild(notaContinuando(tramo));
+              scrollDown();
+              const laPieza = ev.pieza || pieza;
+              SENDING = false;
+              $('input').value = PEDIDO_CONTINUAR;
+              await send({ burbuja: body, tramo: tramo + 1, pieza: laPieza });
+              return;
+            }
+
+            limpiarNotas(body.parentNode);
+            const piezaFinal = ev.pieza || pieza;
+
+            if(piezaFinal){
+              // El contenido terminado NO se deja como un muro de texto en el
+              // chat: se guarda en la biblioteca y acá queda una tarjeta que
+              // lleva ahí. Con cinco comandos en una sesión, el chat serían cinco
+              // paredes de texto y encontrar algo sería imposible — que es
+              // justamente el problema que la biblioteca resuelve.
+              mostrarTarjeta(body, piezaFinal, acc, ev.truncada);
+            } else {
+              body.parentNode.appendChild(botonGuardar(acc));
+              // Se agotaron los tramos y sigue sin terminar: queda el botón manual.
+              if(ev.truncada) body.parentNode.appendChild(avisoDeCorte(body, tramo, null));
+            }
             scrollDown();
           }
         } else if(ev.type === 'error'){

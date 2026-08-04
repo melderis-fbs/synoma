@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 192 tests en verde.
+Todo esto está implementado y con tests: `npm test` → 200 tests en verde.
 
 ---
 
@@ -639,6 +639,91 @@ día que se conectara el envío de emails, con clientes esperando el código.
 
 ---
 
+## 🔴 16. El 504: un plan semanal no cabe en una invocación de Netlify
+
+**El diagnóstico, por fin con un número.** Después de dos rondas a ciegas, el
+mensaje trajo el código: **504**. No era el código ni el deploy. Era el tope de
+tiempo de la plataforma.
+
+**Y la cuenta que había que hacer antes:**
+
+```
+2.200 tokens ÷ ~60 tokens/segundo = 37 segundos
+Tope de Netlify:                     10 s  (26-30 si te lo suben)
+```
+
+**Un plan semanal completo no cabe en una sola invocación. Punto.** Bajar
+`MAX_TOKENS` no lo arregla: lo achica hasta que deja de ser un plan.
+
+**El arreglo: partir la respuesta, no acortarla.**
+
+`MAX_TOKENS` baja a **900** (unos 12 segundos de generación, que sí entran) y
+cuando la respuesta queda cortada **el navegador pide el resto solo** y lo pega en
+la misma burbuja. El cliente ve una respuesta larga que va apareciendo; abajo son
+tres o cuatro pedidos cortos, cada uno dentro del tope. Como el historial vive en
+el servidor (punto 9), la continuación arranca justo donde quedó sin repetir nada.
+
+Hay un límite de 4 tramos para que un modelo que no sabe terminar no genere
+pedidos para siempre. Al llegar ahí queda el botón manual.
+
+**Tres piezas más, cada una tapando un agujero distinto:**
+
+*Uno — cortamos nosotros antes que Netlify.* Un deadline interno
+(`SYNOMA_DEADLINE_MS`, 8,5 s por defecto) para la diferencia entre dos finales muy
+distintos:
+
+| | Resultado |
+|---|---|
+| Cortamos nosotros | el cliente tiene el texto que llegó, queda guardado, y sigue solo |
+| Corta Netlify | 504, se pierde TODO, y ni siquiera es JSON |
+
+*Dos — un byte de entrada (`ping`).* Se manda antes de esperar a Claude, para que
+la plataforma abra las cabeceras HTTP ya. Sin eso, si el modelo tarda en arrancar
+—y tarda más cuanto más grande es el prompt— Netlify puede matar la función antes
+de haber mandado una sola cabecera: entonces reemplaza toda la respuesta por un
+504 en HTML y el navegador no puede leer nada. Con la conexión abierta, lo peor
+que pasa es perder el final.
+
+*Tres — se mide el tiempo hasta la primera palabra aparte del total.* En el log:
+
+```
+[synoma] ok · ttft=2100ms total=9400ms · 3800 caracteres
+```
+
+Si lo que se come el presupuesto es el `ttft`, el problema es el tamaño del prompt
+o que el caché no pegó. Si es el total, es cuánto escribe el modelo. Son arreglos
+distintos y desde el navegador se veían igual.
+
+**La continuación se le pega a la MISMA pieza de la biblioteca**
+(`ampliarPieza`). Sin eso, la biblioteca del cliente quedaría con "Plan semanal
+(1 de 3)", "(2 de 3)"… en lugar de un plan.
+
+---
+
+## 🟢 17. El chat dejó de ser un muro de texto
+
+**El pedido, textual:** *"en todo caso que se cree en la biblioteca directamente,
+y que el msj sea 'mirá tu biblioteca' o algo así"*. Tiene razón, y resuelve algo
+que el punto anterior dejaba a medias.
+
+**Antes:** cada comando dejaba su contenido completo en el chat. Con cinco
+comandos en una sesión, cinco paredes de texto — y encontrar algo, imposible. Que
+es exactamente el problema que la biblioteca resuelve: dejar el muro *además* de
+guardarlo es no resolverlo.
+
+**Ahora:** mientras se genera, el texto se ve aparecer (para que haya señal de
+vida). Cuando termina, la burbuja se convierte en una tarjeta corta:
+
+> 📅 **PLAN SEMANAL · GUARDADO**
+> Tu semana del 4 al 10
+> *Está en 📚 Mis contenidos. Miralo como calendario y bajátelo a tu agenda.*
+> **[📅 Ver mi calendario]** **[📚 Mirá tu biblioteca]** [Ver el texto acá]
+
+El texto no se pierde: queda a un toque en "Ver el texto acá". Y para un plan, el
+botón principal lleva al calendario, que es su forma útil — no al texto.
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -676,14 +761,15 @@ rollback.
 | `SYNOMA_DIAS_RETENCION` | *(opcional)* días que se guarda el chat. Default 90. |
 | `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. |
 | `SYNOMA_ZONA_HORARIA` | *(opcional)* zona para las fechas. Default `America/Argentina/Buenos_Aires`. |
-| `SYNOMA_MAX_TOKENS` | *(opcional)* largo máximo de la respuesta. Default 2200. Bajalo si algo se corta. |
+| `SYNOMA_MAX_TOKENS` | *(opcional)* largo de cada tramo de respuesta. Default 900. |
+| `SYNOMA_DEADLINE_MS` | *(opcional)* cuándo cortar antes que Netlify. Default 8500. **Si te subieron el tope de funciones a 26 s, poné 22000: van a hacer falta menos vueltas y todo va a salir más rápido.** |
 | `SYNOMA_MS_REINTENTO` | *(opcional)* ms de margen para reintentar una respuesta vacía. Default 7000. |
 
 **Deploy:**
 
 ```bash
 npm install
-npm test              # 192 tests, deberían pasar todos
+npm test              # 200 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 

@@ -147,6 +147,29 @@ export async function listarPiezas(clienteId, { estado = null, tipo = null, limi
   return rows;
 }
 
+// Le pega la continuación a una pieza que ya existe.
+//
+// Cuando una respuesta larga se corta por tiempo, el navegador pide el resto solo.
+// Sin esto, cada tramo crearía una pieza nueva y la biblioteca del cliente
+// quedaría con "Plan semanal (1 de 3)", "(2 de 3)"… en vez de un plan.
+//
+// El filtro por cliente_id va junto al id: sin eso, alguien con el id de una
+// pieza ajena podría escribirle encima.
+export async function ampliarPieza(clienteId, piezaId, extra) {
+  const texto = String(extra ?? '').trim();
+  if (!texto) return null;
+
+  const sql = getSql();
+  const rows = await sql`
+    UPDATE piezas
+    SET contenido = left(contenido || ${texto}, ${MAX_CONTENIDO}),
+        actualizado_en = now()
+    WHERE id = ${piezaId} AND cliente_id = ${clienteId}
+    RETURNING id, tipo, titulo, estado
+  `;
+  return rows[0] ?? null;
+}
+
 // Una pieza sola. El filtro por cliente_id va junto al id: sin eso, alguien con
 // el id de una pieza ajena podría leerla.
 export async function leerPieza(clienteId, piezaId) {
