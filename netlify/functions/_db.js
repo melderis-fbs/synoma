@@ -1,16 +1,14 @@
 // Synoma Founders — acceso a la base de datos
 //
-// Usa el driver HTTP de Neon (`@neondatabase/serverless`) y no un pool clásico.
-// El motivo: cada invocación de una función serverless es un proceso distinto,
-// así que un pool de conexiones abre una conexión nueva por invocación y Postgres
-// tiene un límite. Con 100 clientes entrando un lunes a la mañana eso se agota.
-// El driver HTTP no mantiene conexiones: cada consulta es un pedido y se termina.
+// Usa el driver `pg` con un pool de conexiones. En el entorno serverless original
+// usábamos el driver HTTP de Neon para no agotar conexiones; acá corremos en un
+// proceso long-lived (Vite dev server), así que un pool es la opción correcta.
 
-import { neon } from '@neondatabase/serverless';
+import pg from 'pg';
 
-// Netlify nombra la variable distinto según cómo se creó la base (integración
-// propia, extensión de Neon, o carga manual). En lugar de fijar un nombre y que
-// falle en silencio, se buscan todos los que puede llegar a usar.
+const { Pool } = pg;
+
+// Se busca la URL de Postgres en varias variables, igual que antes.
 const CANDIDATOS = [
   'NETLIFY_DATABASE_URL',
   'NETLIFY_DATABASE_URL_UNPOOLED',
@@ -24,16 +22,11 @@ const ES_URL_POSTGRES = /^postgres(ql)?:\/\/\S+$/i;
 let yaAvisado = false;
 
 export function urlDeBase() {
-  // 1. Los nombres conocidos, en orden fijo: si hay más de uno, siempre gana el
-  //    mismo y el comportamiento no cambia entre deploys.
   for (const variable of CANDIDATOS) {
     const url = process.env[variable];
     if (url && ES_URL_POSTGRES.test(url.trim())) return { url: url.trim(), variable };
   }
 
-  // 2. Si ninguno está, se busca por CONTENIDO: cualquier variable cuyo valor
-  //    sea una URL de Postgres. Adivinar nombres ya falló una vez; el valor no
-  //    depende de cómo lo haya llamado la plataforma.
   for (const [variable, valor] of Object.entries(process.env)) {
     if (typeof valor === 'string' && ES_URL_POSTGRES.test(valor.trim())) {
       console.warn(`[db] URL encontrada en ${variable} (no estaba entre los nombres previstos)`);
@@ -41,8 +34,6 @@ export function urlDeBase() {
     }
   }
 
-  // 3. No hay nada. Se listan los NOMBRES de las variables que se le parecen
-  //    —nunca los valores— para poder ver de un vistazo qué hay realmente.
   if (!yaAvisado) {
     yaAvisado = true;
     const parecidas = Object.keys(process.env)
@@ -57,6 +48,7 @@ export function urlDeBase() {
 }
 
 let _sql = null;
+let _pool = null;
 
 // Costura para los tests: permite inyectar una base falsa y así probar la lógica
 // de las funciones sin un Postgres corriendo. Solo la usan los tests.
@@ -64,18 +56,41 @@ export function usarSqlDePrueba(fn) {
   _sql = fn;
 }
 
-// Devuelve la función de consultas. Se cachea entre invocaciones que reusan el
-// mismo contenedor.
+// Devuelve una función tagged-template que imita la API de `neon()`.
+// Uso: const sql = getSql(); const rows = await sql`SELECT * FROM ...`;
 export function getSql() {
   if (_sql) return _sql;
   const encontrada = urlDeBase();
   if (!encontrada) {
     throw new Error(
       `No hay URL de base de datos. Se buscó en: ${CANDIDATOS.join(', ')}. ` +
-      'Creá la base en Netlify (Database) o cargá DATABASE_URL a mano.',
+      'Cargá DATABASE_URL en el entorno.',
     );
   }
-  _sql = neon(encontrada.url);
+
+  if (!_pool) {
+    _pool = new Pool({
+      connectionString: encontrada.url,
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000,
+    });
+  }
+
+  // Wrapper que imita la API tagged-template de neon()
+  const sql = (strings, ...values) => {
+    // Reconstruye la consulta con $1, $2, ... como haría neon()
+    let text = '';
+    for (let i = 0; i < strings.length; i++) {
+      text += strings[i];
+      if (i < values.length) text += `${i + 1}`;
+    }
+    return _pool.query(text, values).then(r => r.rows);
+  };
+
+  // Exponer el pool para cierre limpio si hace falta
+  sql._pool = _pool;
+  _sql = sql;
   return _sql;
 }
 
