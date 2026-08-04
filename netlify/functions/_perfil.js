@@ -68,7 +68,7 @@ export function bloqueDePerfil(p) {
     // Primero la Fundación: es el bloque que define pilares, persona y voz, o
     // sea el que decide si la pieza sale suya o genérica. Va arriba para que sea
     // lo primero que el modelo tiene presente al planificar.
-    '--- SU FUNDACIÓN (los 8 bloques) ---',
+    '--- SUS BASES (las 8 que definen su marca) ---',
     parte(p?.fundacion, '(no cargada — si te hace falta un bloque, pedíselo, y ofrecele el comando /fundacion)'),
     '--- SU MANUAL DE TRANSFORMACIÓN ---',
     parte(p?.manual, '(no cargado — pedile que lo cargue en "Mi identidad")'),

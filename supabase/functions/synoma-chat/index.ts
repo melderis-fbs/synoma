@@ -86,7 +86,7 @@ function bloqueDePerfil(perfil: any) {
   };
   return [
     "=== PERFIL DEL CLIENTE (su identidad — usala en TODO) ===",
-    "--- SU FUNDACIÓN (los 8 bloques) ---",
+    "--- SUS BASES (las 8 que definen su marca) ---",
     parte(p.fundacion, "(no cargada — si te hace falta un bloque, pedíselo, y ofrecele el comando /fundacion)"),
     "--- SU MANUAL DE TRANSFORMACIÓN ---",
     parte(p.manual, "(no cargado — pedile que lo cargue en \"Mi identidad\")"),
@@ -239,6 +239,50 @@ async function callClaude(apiKey: string, system: any[], messages: any[], attemp
   throw new Error(`Anthropic ${res.status}: ${detail.slice(0, 300)}`);
 }
 
+// Pumps a Claude stream from start to end, emitting text deltas as NDJSON.
+// Returns 'fin' on success, 'error' if the stream reported a failure,
+// 'tiempo' if we ran out of time, or 'tarde' if the model never started writing.
+async function bombearStream(
+  cuerpo: ReadableStream<Uint8Array>,
+  emit: (obj: any) => void,
+  inicioPedido: number,
+): Promise<{ resultado: string; emittedText: boolean; respuesta: string; stopReason: string | null }> {
+  const reader = cuerpo.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let emittedText = false;
+  let respuesta = "";
+  let stopReason: string | null = null;
+
+  while (true) {
+    if (Date.now() - inicioPedido > DEADLINE_MS) {
+      reader.cancel().catch(() => {});
+      return { resultado: emittedText ? "tiempo" : "tarde", emittedText, respuesta, stopReason };
+    }
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const raw = line.slice(5).trim();
+      if (!raw || raw === "[DONE]") continue;
+      let ev; try { ev = JSON.parse(raw); } catch { continue; }
+      if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
+        emittedText = true;
+        respuesta += ev.delta.text;
+        emit({ type: "text", text: ev.delta.text });
+      } else if (ev.type === "message_delta") {
+        if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
+      } else if (ev.type === "error") {
+        return { resultado: "error", emittedText, respuesta, stopReason };
+      }
+    }
+  }
+  return { resultado: "fin", emittedText, respuesta, stopReason };
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
@@ -299,11 +343,13 @@ Deno.serve(async (req: Request) => {
   const stream = new ReadableStream({
     async start(controller) {
       const emit = (obj: any) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
-      let respuesta = "";
-      let emittedText = false;
-      let stopReason = null;
       let cerrado = false;
       const cerrar = () => { if (cerrado) return; cerrado = true; try { controller.close(); } catch {} };
+
+      let respuesta = "";
+      let emittedText = false;
+      let stopReason: string | null = null;
+      let resultado = "fin";
 
       const persistir = () => {
         if (!respuesta.trim()) return;
@@ -313,36 +359,27 @@ Deno.serve(async (req: Request) => {
       emit({ type: "ping" });
 
       try {
-        const reader = upstream.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let resultado = "fin";
+        const r = await bombearStream(upstream.body!, emit, inicioPedido);
+        respuesta = r.respuesta;
+        emittedText = r.emittedText;
+        stopReason = r.stopReason;
+        resultado = r.resultado;
 
-        while (true) {
-          if (Date.now() - inicioPedido > DEADLINE_MS) {
-            reader.cancel().catch(() => {});
-            resultado = emittedText ? "tiempo" : "tarde";
-            break;
-          }
-          const { value, done } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() ?? "";
-          for (const line of lines) {
-            if (!line.startsWith("data:")) continue;
-            const raw = line.slice(5).trim();
-            if (!raw || raw === "[DONE]") continue;
-            let ev; try { ev = JSON.parse(raw); } catch { continue; }
-            if (ev.type === "content_block_delta" && ev.delta?.type === "text_delta") {
-              emittedText = true;
-              respuesta += ev.delta.text;
-              emit({ type: "text", text: ev.delta.text });
-            } else if (ev.type === "message_delta") {
-              if (ev.delta?.stop_reason) stopReason = ev.delta.stop_reason;
-            } else if (ev.type === "error") {
-              resultado = "error";
-            }
+        // Empty response: retry once silently if we still have time budget.
+        // Same logic as the Netlify version: a blank completion is a transient
+        // API hiccup, and making the client re-type their /semana is making them
+        // pay for a problem that isn't theirs.
+        if (resultado === "fin" && !emittedText && Date.now() - inicioPedido < MS_PARA_REINTENTAR) {
+          console.warn("[synoma] respuesta vacía — reintentando una vez");
+          try {
+            const otra = await callClaude(apiKey, system, trimmed);
+            const r2 = await bombearStream(otra.body!, emit, inicioPedido);
+            respuesta = r2.respuesta;
+            emittedText = r2.emittedText;
+            stopReason = r2.stopReason;
+            resultado = r2.resultado;
+          } catch (e) {
+            console.error("[synoma] el reintento también falló:", e?.message ?? e);
           }
         }
 
