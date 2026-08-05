@@ -396,12 +396,12 @@
       <button class="cmd" onclick="runCmd('/semana')"><span class="em">📅</span> Mi semana de contenido</button>
       <button class="cmd" onclick="askCmd('/idea','¿Sobre qué tema?')"><span class="em">💡</span> Ideas sobre un tema</button>
       <div class="section-label"><b>Crear</b></div>
-      <button class="cmd" onclick="askCmd('/guion','¿Qué idea convertimos en guion?')"><span class="em">🎬</span> Guion yapping</button>
-      <button class="cmd" onclick="askCmd('/gancho','¿Tema para los ganchos?')"><span class="em">🪝</span> 10 ganchos</button>
+      <button class="cmd" onclick="askCmd('/reel','¿Qué idea convertimos en reel?')"><span class="em">🎬</span> Reel</button>
       <button class="cmd" onclick="runCmd('/historias')"><span class="em">📱</span> Historias de hoy</button>
       <button class="cmd" onclick="runCmd('/venta')"><span class="em">🔥</span> Pieza de venta</button>
       <button class="cmd" onclick="askCmd('/post','¿Qué idea convertimos en post?')"><span class="em">📝</span> Post / carrusel</button>
       <div class="section-label"><b>Mejorar</b></div>
+      <button class="cmd" onclick="runCmd('/cicloventa')"><span class="em">📆</span> Ciclo de Venta</button>
       <button class="cmd" onclick="askCmd('/repurpose','Pegá el contenido a reciclar:')"><span class="em">♻️</span> Reciclar contenido</button>
       <button class="cmd" onclick="askCmd('/revisar','Pegá tu borrador:')"><span class="em">🔍</span> Revisar mi borrador</button>
       <button class="cmd" onclick="askCmd('/objecion','Pegá el comentario o DM:')"><span class="em">💬</span> Responder objeción</button>
@@ -927,9 +927,9 @@ async function abrirBiblioteca(){
     const data = await res.json();
     PIEZAS = data?.piezas || [];
     ETIQUETAS = {
-      plan: 'Plan semanal', idea: 'Ideas', guion: 'Guion', gancho: 'Ganchos',
+      plan: 'Plan semanal', idea: 'Ideas', reel: 'Reel',
       historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
-      reciclado: 'Contenido reciclado', revision: 'Revisión', otro: 'Contenido',
+      reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', otro: 'Contenido',
     };
     pintarFiltros();
     pintarGrilla();
@@ -977,7 +977,7 @@ function pintarGrilla(){
   if(lista.length === 0){
     vacia.hidden = false;
     vacia.textContent = PIEZAS.length === 0
-      ? 'Todavía no hay nada acá. Volvé al chat y pedile un 📅 plan semanal o un 🎬 guion — se guardan solos.'
+      ? 'Todavía no hay nada acá. Volvé al chat y pedile un 📅 plan semanal o un 🎬 reel — se guardan solos.'
       : 'No hay piezas en este filtro.';
     return;
   }
@@ -1366,14 +1366,14 @@ function errorNote(message){
    El texto no se pierde: queda a un toque, en "Ver el texto acá". */
 
 const EMOJI_TIPO = {
-  plan: '📅', idea: '💡', guion: '🎬', gancho: '🪝', historia: '📱',
-  venta: '🔥', post: '📝', reciclado: '♻️', revision: '🔍', otro: '📄',
+  plan: '📅', idea: '💡', reel: '🎬', historia: '📱',
+  venta: '🔥', post: '📝', reciclado: '♻️', revision: '🔍', cicloventa: '📆', otro: '📄',
 };
 
 const NOMBRE_TIPO = {
-  plan: 'Plan semanal', idea: 'Ideas', guion: 'Guion', gancho: 'Ganchos',
+  plan: 'Plan semanal', idea: 'Ideas', reel: 'Reel',
   historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
-  reciclado: 'Contenido reciclado', revision: 'Revisión', otro: 'Contenido',
+  reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', otro: 'Contenido',
 };
 
 function mostrarTarjeta(body, pieza, texto, truncada){

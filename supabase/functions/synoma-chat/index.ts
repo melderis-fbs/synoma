@@ -1,5 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { SYSTEM_BASE } from "./_prompt.ts";
+import { CONOCIMIENTO } from "./_conocimiento.ts";
 
 const MODEL = "claude-sonnet-5";
 const MAX_TOKENS = Number(Deno.env.get("SYNOMA_MAX_TOKENS")) || 8000;
@@ -156,10 +157,10 @@ function bloqueDeFecha(ahora = new Date()) {
 }
 
 // --- Biblioteca helpers ---
-const COMANDOS_PIEZA = ["semana","idea","guion","gancho","historias","venta","post","repurpose","revisar","objecion"];
+const COMANDOS_PIEZA = ["semana","idea","reel","historias","venta","post","repurpose","revisar","cicloventa","objecion"];
 const TIPO_PIEZA: Record<string, string> = {
-  semana:"plan", idea:"idea", guion:"guion", gancho:"gancho", historia:"historia",
-  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", objecion:"otro",
+  semana:"plan", idea:"idea", reel:"reel", historia:"historia",
+  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", cicloventa:"cicloventa", objecion:"otro",
 };
 
 function detectarPieza(pregunta: string) {
@@ -634,6 +635,7 @@ async function handleChat(cliente: { id: string }, req: Request) {
   const system = [
     { type: "text", text: bloqueDePerfil(perfil), cache_control: { type: "ephemeral" } },
     { type: "text", text: SYSTEM_BASE, cache_control: { type: "ephemeral" } },
+    { type: "text", text: CONOCIMIENTO, cache_control: { type: "ephemeral" } },
     { type: "text", text: bloqueDeFecha() },
   ];
 

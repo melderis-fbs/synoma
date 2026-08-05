@@ -19,13 +19,13 @@ import { getSql } from './_db.js';
 const TIPOS = {
   '/semana': 'plan',
   '/idea': 'idea',
-  '/guion': 'guion',
-  '/gancho': 'gancho',
+  '/reel': 'reel',
   '/historias': 'historia',
   '/venta': 'venta',
   '/post': 'post',
   '/repurpose': 'reciclado',
   '/revisar': 'revision',
+  '/cicloventa': 'cicloventa',
 };
 
 export const ESTADOS = ['nueva', 'grabada', 'publicada', 'archivada'];
@@ -80,13 +80,13 @@ export function titularPieza({ argumento, respuesta, tipo }) {
 export const ETIQUETAS = {
   plan: 'Plan semanal',
   idea: 'Ideas',
-  guion: 'Guion',
-  gancho: 'Ganchos',
+  reel: 'Reel',
   historia: 'Historias',
   venta: 'Pieza de venta',
   post: 'Post',
   reciclado: 'Contenido reciclado',
   revision: 'Revisión',
+  cicloventa: 'Ciclo de Venta',
   otro: 'Contenido',
 };
 
