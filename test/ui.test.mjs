@@ -259,6 +259,56 @@ test('no se pide la continuación para siempre', opciones, async () => {
   await browser.close();
 });
 
+// --- el reloj del cliente ---------------------------------------------------
+
+test('un pedido colgado no espera para siempre', opciones, async () => {
+  // `fetch` no tiene timeout: sin este reloj, una conexión que se cuelga deja el
+  // indicador de "escribiendo…" girando indefinidamente y el cliente no sabe si
+  // esperar, reintentar o avisar. Es la queja literal: "se trabó, no me respondió
+  // más".
+  const browser = await chromium.launch({ executablePath });
+  const page = await browser.newPage();
+
+  await page.route('**/*', async (route) => {
+    const url = route.request().url();
+    const json = (body) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.endsWith('/app')) return route.fulfill({ status: 200, contentType: 'text/html', body: HTML });
+    if (url.includes('/api/auth/sesion')) {
+      return json({ sesion: { email: 'a@x.com', nombre: 'A', perfil_cargado: true }, config: { precio: '59', moneda: 'USD' } });
+    }
+    if (url.includes('/api/chat')) return json({ mensajes: [] });
+    // Tarda mucho en responder. Termina resolviendo —si no, el cierre del
+    // navegador también queda colgado y el test cuelga la suite entera— pero
+    // bastante después de que salte el reloj del cliente.
+    if (url.includes('/api/synoma')) {
+      await new Promise((r) => setTimeout(r, 4000));
+      return route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: '' });
+    }
+    if (url.includes('fonts.g')) return route.fulfill({ status: 200, contentType: 'text/css', body: '' });
+    return route.fulfill({ status: 404, body: '' });
+  });
+
+  await page.goto(`${ORIGEN}/app`);
+  await page.waitForSelector('#view-dash.active');
+  // Se acorta el reloj para no esperar 35 segundos en un test. Funciona porque las
+  // constantes son `var`: quedan en window y se pueden pisar desde acá.
+  await page.evaluate(() => { window.ESPERA_ARRANQUE = 1500; });
+  await page.click('text=Mi semana de contenido');
+
+  // Mientras espera, el contador tiene que moverse: es lo que distingue "está
+  // pensando" de "se colgó".
+  await page.waitForTimeout(1200);
+  const esperando = await page.evaluate(() => document.getElementById('typing').textContent);
+  assert.match(esperando, /\(\d+s\)/, `el contador no aparece: ${esperando}`);
+
+  // Y al saltar el reloj tiene que salir un mensaje, no silencio.
+  await page.waitForFunction(() => document.querySelectorAll('#msgs .msg.bot').length > 0, { timeout: 8000 });
+  const r = await respuesta(page);
+  assert.match(r.texto, /tardó demasiado/i);
+  assert.ok(r.tieneBotonReintentar);
+  await browser.close();
+});
+
 // --- errores del servidor que sí traen mensaje ------------------------------
 
 test('un error del servidor se muestra con su mensaje, no en blanco', opciones, async () => {

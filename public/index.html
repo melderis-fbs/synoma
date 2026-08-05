@@ -1460,6 +1460,12 @@ function runCmd(cmd){ $('input').value = cmd; send(); }
    El tope de tramos existe para que un modelo que no sabe terminar no genere
    pedidos para siempre. Al llegar ahí queda el botón manual. */
 const MAX_TRAMOS = 4;
+// Cuánto se espera la PRIMERA palabra antes de dar el pedido por colgado. Tiene
+// que ser mayor que el tope de la función en el servidor (que corta y avisa), así
+// que si este reloj salta es porque el pedido no llegó a destino.
+var ESPERA_ARRANQUE = 35000;
+// Y cuánto se tolera sin recibir texto una vez que empezó a llegar.
+var ESPERA_ENTRE_FRAGMENTOS = 20000;
 const PEDIDO_CONTINUAR = 'Seguí exactamente desde donde te cortaste. No repitas nada de lo que ya escribiste, no vuelvas a presentar y no expliques que estás continuando: escribí directamente lo que sigue.';
 
 async function send(opciones = {}){
@@ -1480,14 +1486,40 @@ async function send(opciones = {}){
 
   let body = burbuja;   // burbuja de la respuesta; se crea al primer fragmento
   let acc = burbuja ? burbuja.dataset.texto || '' : '';   // texto acumulado
+  let vigilante = null;
+  // Fuera del try a propósito: un `let` declarado DENTRO del try no existe en el
+  // catch, y leerlo ahí tira ReferenceError. El error real se perdía y no se
+  // mostraba nada — el mismo síntoma que veníamos persiguiendo.
+  let motivoAborto = null;
 
   try{
     // Se manda SOLO la pregunta nueva. Ni el código, ni el perfil, ni el
     // historial: el servidor sabe quién es por la cookie y lee lo demás de la
     // base. Antes iba todo desde el navegador, así que un localStorage limpio
     // mandaba un perfil vacío y Synoma escribía genérico en silencio.
+    // Reloj del lado del cliente. `fetch` no tiene timeout: si la conexión se
+    // queda colgada, el indicador de "escribiendo…" gira para siempre y el cliente
+    // no sabe si esperar, reintentar o avisar. Se corta por dos motivos:
+    //   · nunca llegó la primera palabra    → ESPERA_ARRANQUE
+    //   · dejó de llegar texto a mitad      → ESPERA_ENTRE_FRAGMENTOS
+    const abortar = new AbortController();
+    let ultimoByte = Date.now();
+    vigilante = setInterval(() => {
+      const quieto = Date.now() - ultimoByte;
+      const tope = acc ? (window.ESPERA_ENTRE_FRAGMENTOS || ESPERA_ENTRE_FRAGMENTOS)
+                       : (window.ESPERA_ARRANQUE || ESPERA_ARRANQUE);
+      if(quieto > tope){
+        motivoAborto = acc ? 'quieto' : 'arranque';
+        abortar.abort();
+      } else if(!acc){
+        // Contador visible: es la diferencia entre "está pensando" y "se colgó".
+        $('typing').textContent = `Synoma está escribiendo… (${Math.round(quieto / 1000)}s)`;
+      }
+    }, 1000);
+
     const res = await fetch('/api/synoma', {
       method:'POST', credentials:'same-origin',
+      signal: abortar.signal,
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify(pieza ? { mensaje: text, continua_pieza: pieza.id } : { mensaje: text }),
     });
@@ -1520,6 +1552,7 @@ async function send(opciones = {}){
     while(true){
       const { value, done } = await reader.read();
       if(done) break;
+      ultimoByte = Date.now();
       buf += dec.decode(value, { stream:true });
       const lines = buf.split('\n');
       buf = lines.pop();
@@ -1588,9 +1621,22 @@ async function send(opciones = {}){
 
     // No hace falta guardar nada acá: el servidor ya persistió el turno.
   }catch(err){
-    handleSendError(err, body, acc);
+    // Un AbortError es NUESTRO reloj, no un fallo del servidor: hay que traducirlo
+    // a algo que el cliente entienda y pueda resolver.
+    if(err && err.name === 'AbortError'){
+      handleSendError({
+        code: motivoAborto === 'quieto' ? 'corte_plataforma' : 'demasiado_lento',
+        message: motivoAborto === 'quieto'
+          ? ''
+          : 'Synoma tardó demasiado en arrancar y corté la espera. Probá de nuevo — la segunda vez casi siempre sale enseguida.',
+      }, body, acc);
+    } else {
+      handleSendError(err, body, acc);
+    }
   }finally{
+    if(vigilante) clearInterval(vigilante);
     $('typing').style.display='none';
+    $('typing').textContent = 'Synoma está escribiendo…';
     $('send-btn').disabled = false;
     SENDING = false;
   }

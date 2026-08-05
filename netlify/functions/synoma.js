@@ -168,11 +168,17 @@ const manejar = async (req) => {
     : null;
 
   // --- Tope de uso por cliente y por día -----------------------------------
+  // Una continuación no cuenta contra el tope: el cliente pidió UNA cosa y la
+  // respuesta se partió por un detalle de infraestructura. Y tampoco se la frena
+  // por el tope, porque dejaría su respuesta cortada a la mitad después de haber
+  // pasado el chequeo.
   const limit = Number(process.env.SYNOMA_DAILY_LIMIT) || DEFAULT_DAILY_LIMIT;
   try {
-    if (await mensajesDeHoy(cliente.id) >= limit) {
+    const hoy = await mensajesDeHoy(cliente.id);
+    if (!continuaPieza && hoy >= limit) {
+      console.warn(`[synoma] tope diario alcanzado: cliente=${cliente.id} mensajes=${hoy} tope=${limit}`);
       return fail(429, 'daily_limit',
-        `Llegaste al tope de ${limit} mensajes por hoy. Mañana se renueva.`, cors);
+        `Llegaste al tope de ${limit} mensajes por hoy. Mañana a la mañana se renueva.`, cors);
     }
   } catch (e) {
     // Si el contador falla se deja pasar: un problema de medición no debería
@@ -508,8 +514,8 @@ function toNdjson(body, cliente, pregunta, reintentar = null, inicioPedido = Dat
           if (usage) {
             // Sin await: registrar el uso no debe demorar la respuesta ni
             // tumbarla si la base está lenta.
-            registrarUso(cliente.id, usage).catch((e) =>
-              console.error('[synoma] no se pudo registrar el uso:', e?.message ?? e));
+            registrarUso(cliente.id, usage, { cuentaComoMensaje: !continuaPieza })
+              .catch((e) => console.error('[synoma] no se pudo registrar el uso:', e?.message ?? e));
           }
           // La pieza SÍ se espera antes de avisar "done": el front muestra
           // "guardado en tu biblioteca" y esa frase tiene que ser verdad. Es un

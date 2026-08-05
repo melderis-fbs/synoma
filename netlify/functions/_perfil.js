@@ -96,18 +96,26 @@ export async function mensajesDeHoy(clienteId) {
 // Se llama después de responder, con lo que informó la API. Los tokens de
 // entrada cacheados van aparte porque cuestan el 10%: sumarlos juntos haría que
 // el costo por cliente que ve Vicky sea casi el triple del real.
-export async function registrarUso(clienteId, usage = {}) {
+//
+// `cuentaComoMensaje` en false para las continuaciones automáticas. Una respuesta
+// larga se parte en tres o cuatro pedidos porque Netlify corta la función, no
+// porque el cliente haya pedido cuatro cosas: contarlas todas le comería el cupo
+// diario cuatro veces más rápido por un detalle de infraestructura del que no
+// tiene la culpa ni se enteró. Los TOKENS sí se suman igual, porque el costo es
+// real y el panel tiene que mostrarlo.
+export async function registrarUso(clienteId, usage = {}, { cuentaComoMensaje = true } = {}) {
   const sql = getSql();
   const entrada = Number(usage.input_tokens ?? 0);
   const cache = Number(usage.cache_read_input_tokens ?? 0)
               + Number(usage.cache_creation_input_tokens ?? 0);
   const salida = Number(usage.output_tokens ?? 0);
+  const suma = cuentaComoMensaje ? 1 : 0;
 
   await sql`
     INSERT INTO uso_diario (cliente_id, fecha, mensajes, tokens_entrada, tokens_entrada_cache, tokens_salida)
-    VALUES (${clienteId}, current_date, 1, ${entrada}, ${cache}, ${salida})
+    VALUES (${clienteId}, current_date, ${suma}, ${entrada}, ${cache}, ${salida})
     ON CONFLICT (cliente_id, fecha) DO UPDATE SET
-      mensajes             = uso_diario.mensajes + 1,
+      mensajes             = uso_diario.mensajes + ${suma},
       tokens_entrada       = uso_diario.tokens_entrada + EXCLUDED.tokens_entrada,
       tokens_entrada_cache = uso_diario.tokens_entrada_cache + EXCLUDED.tokens_entrada_cache,
       tokens_salida        = uso_diario.tokens_salida + EXCLUDED.tokens_salida

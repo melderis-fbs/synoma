@@ -3,7 +3,7 @@
 Cada problema con el arreglo concreto que se aplicó. El detalle del análisis
 original está en [`EVALUACION.md`](./EVALUACION.md).
 
-Todo esto está implementado y con tests: `npm test` → 209 tests en verde (200 de servidor + 9 de interfaz en Chromium).
+Todo esto está implementado y con tests: `npm test` → 210 tests en verde (200 de servidor + 10 de interfaz en Chromium).
 
 ---
 
@@ -791,6 +791,53 @@ migraciones).
 
 ---
 
+## 🔴 20. "Se trabó en el bloque 6": dos causas distintas
+
+**El síntoma.** Haciendo `/fundacion`, en el bloque 6 dejó de responder. Sin error.
+
+**Causa 1 — un pedido colgado esperaba para siempre.** `fetch` no tiene timeout.
+Si la conexión se queda sin respuesta, el indicador de "escribiendo…" gira
+indefinidamente y el cliente no sabe si esperar, reintentar o avisar.
+
+Ahora hay un reloj del lado del navegador (`AbortController`):
+
+| Situación | Tope |
+|---|---|
+| Nunca llega la primera palabra | 35 s |
+| Dejó de llegar texto a mitad | 20 s |
+
+Y mientras espera, el indicador muestra los segundos: `Synoma está escribiendo…
+(12s)`. Es la diferencia entre "está pensando" y "se colgó". Al saltar el reloj
+sale un mensaje con botón de reintentar, nunca silencio.
+
+**Causa 2 — las continuaciones se comían el cupo diario.** Esto lo introduje yo
+en el arreglo del 504: al partir las respuestas en tramos, cada tramo contaba como
+un mensaje contra el tope de 60 por día. **Un solo `/semana` gastaba 4.** Con un
+día de pruebas es perfectamente posible llegar al tope.
+
+Está mal por donde se lo mire: el cliente pidió UNA cosa, y la respuesta se partió
+por un detalle de infraestructura del que no tiene la culpa ni se enteró. Ahora las
+continuaciones no cuentan como mensaje —los **tokens** sí se suman, porque el costo
+es real y el panel tiene que mostrarlo— y tampoco se las frena por el tope, porque
+sería cortar una respuesta a la mitad después de haberla autorizado.
+
+**Y un tercer bug, encontrado por el test del reloj:**
+
+```js
+try {
+  let motivoAborto = null;    // ← declarado ACÁ
+} catch(e) {
+  ... motivoAborto ...        // ← ReferenceError: no existe en el catch
+}
+```
+
+Un `let` declarado dentro del `try` no existe en el `catch`. Leerlo ahí tiraba
+`ReferenceError`, el error real se perdía **y no se mostraba nada** — exactamente
+el mismo síntoma que veníamos persiguiendo, esta vez causado por el arreglo. Lo
+agarró el test de interfaz en el primer intento; a ojo era invisible.
+
+---
+
 ## Lo que NO se cambió, y por qué
 
 **Modelo y `max_tokens`.** Se mantuvo `claude-sonnet-5` con 2.500 tokens, que es
@@ -826,7 +873,7 @@ rollback.
 | `PRECIO_MENSUAL` / `MONEDA` | *(opcional)* default `59` / `USD` |
 | `RENOVACION_URL` | a dónde mandar a quien terminó el programa y quiere seguir |
 | `SYNOMA_DIAS_RETENCION` | *(opcional)* días que se guarda el chat. Default 90. |
-| `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. |
+| `SYNOMA_DAILY_LIMIT` | *(opcional)* mensajes por cliente por día. Default 60. Las continuaciones automáticas no cuentan. |
 | `SYNOMA_ZONA_HORARIA` | *(opcional)* zona para las fechas. Default `America/Argentina/Buenos_Aires`. |
 | `SYNOMA_MAX_TOKENS` | *(opcional)* largo de cada tramo de respuesta. Default 900. |
 | `SYNOMA_DEADLINE_MS` | *(opcional)* cuándo cortar antes que Netlify. Default 8500. **Si te subieron el tope de funciones a 26 s, poné 22000: van a hacer falta menos vueltas y todo va a salir más rápido.** |
@@ -836,7 +883,7 @@ rollback.
 
 ```bash
 npm install
-npm test              # 209 tests, deberían pasar todos
+npm test              # 210 tests, deberían pasar todos
 git push              # Netlify deploya solo
 ```
 
