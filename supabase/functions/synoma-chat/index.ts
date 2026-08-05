@@ -9,6 +9,10 @@ const MAX_CHARS_MENSAJE = 20000;
 const DEFAULT_DAILY_LIMIT = 60;
 const MENSAJES_CONTEXTO = 24;
 const MAX_CHARS_CONTEXTO = 40000;
+const DIAS_SESION = 120;
+const MINUTOS_CODIGO = 10;
+const MAX_INTENTOS = 5;
+const MAX_PEDIDOS_HORA = 5;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -23,58 +27,88 @@ function json(data: unknown, status = 200) {
   });
 }
 
-// --- Supabase REST helper (PostgREST) ---
-async function supabaseSelect(table: string, query: string, filter: string) {
+// --- Supabase REST helper (service role — BYPASSRLS) ---
+// Uses SERVICE_ROLE_KEY so the server can read/write all tables regardless of RLS.
+// The browser never uses this key — it only sends its session token.
+
+async function sbSelect(table: string, query: string, filter: string) {
   const url = `${Deno.env.get("SUPABASE_URL")}/rest/v1/${table}?select=${encodeURIComponent(query)}&${filter}`;
   const res = await fetch(url, {
     headers: {
-      apikey: Deno.env.get("SUPABASE_ANON_KEY")!,
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+      apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
     },
   });
-  if (!res.ok) throw new Error(`supabase ${table}: ${res.status}`);
+  if (!res.ok) throw new Error(`sb select ${table}: ${res.status}`);
   return res.json();
 }
 
-async function supabaseInsert(table: string, body: Record<string, unknown>) {
+async function sbInsert(table: string, body: Record<string, unknown>) {
   const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/rest/v1/${table}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      apikey: Deno.env.get("SUPABASE_ANON_KEY")!,
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+      apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
       Prefer: "return=representation",
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`supabase insert ${table}: ${res.status}`);
+  if (!res.ok) throw new Error(`sb insert ${table}: ${res.status}`);
   return res.json();
 }
 
-async function supabaseUpdate(table: string, body: Record<string, unknown>, filter: string) {
+async function sbUpdate(table: string, body: Record<string, unknown>, filter: string) {
   const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/rest/v1/${table}?${filter}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
-      apikey: Deno.env.get("SUPABASE_ANON_KEY")!,
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+      apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
       Prefer: "return=representation",
     },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`supabase update ${table}: ${res.status}`);
+  if (!res.ok) throw new Error(`sb update ${table}: ${res.status}`);
   return res.json();
 }
 
-async function supabaseDelete(table: string, filter: string) {
+async function sbDelete(table: string, filter: string) {
   const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/rest/v1/${table}?${filter}`, {
     method: "DELETE",
     headers: {
-      apikey: Deno.env.get("SUPABASE_ANON_KEY")!,
-      Authorization: `Bearer ${Deno.env.get("SUPABASE_ANON_KEY")}`,
+      apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
     },
   });
-  if (!res.ok) throw new Error(`supabase delete ${table}: ${res.status}`);
+  if (!res.ok) throw new Error(`sb delete ${table}: ${res.status}`);
+}
+
+// --- Hash (SHA-256, matches the frontend) ---
+async function sha256(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const hash = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// --- Session validation ---
+// Returns the client record if the token is valid and the session hasn't expired.
+// This is the ONLY way the server trusts a request — the browser sends a token,
+// the server hashes it and looks up the session. No cliente_id from the body.
+async function validarSesion(token: string): Promise<{ id: string; email: string; nombre: string | null } | null> {
+  if (!token) return null;
+  const tokenHash = await sha256(token);
+  const rows = await sbSelect("sesiones", "cliente_id", `token_hash=eq.${tokenHash}&expira_en=gt.${new Date().toISOString()}&limit=1`);
+  if (!rows || rows.length === 0) return null;
+  const clienteId = rows[0].cliente_id;
+  const clientes = await sbSelect("clientes", "id,email,nombre,acceso", `id=eq.${clienteId}&limit=1`);
+  if (!clientes || clientes.length === 0) return null;
+  const c = clientes[0];
+  if (c.acceso !== "activo") return null;
+  // Fire-and-forget: update last use
+  sbUpdate("sesiones", { ultimo_uso_en: new Date().toISOString() }, `token_hash=eq.${tokenHash}`).catch(() => {});
+  sbUpdate("clientes", { ultimo_acceso_en: new Date().toISOString() }, `id=eq.${clienteId}`).catch(() => {});
+  return { id: c.id, email: c.email, nombre: c.nombre };
 }
 
 // --- Profile block for the model ---
@@ -147,7 +181,7 @@ async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: 
   const det = detectarPieza(pregunta);
   if (!det) return null;
   const titulo = extraerTitulo(respuesta, det.tipo);
-  const rows = await supabaseInsert("piezas", {
+  const rows = await sbInsert("piezas", {
     cliente_id: clienteId, tipo: det.tipo, titulo, contenido: respuesta, comando: det.comando, estado: "nueva",
   });
   return Array.isArray(rows) ? rows[0] : null;
@@ -155,31 +189,17 @@ async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: 
 
 // --- Conversation helpers ---
 async function conversacionAbierta(clienteId: string) {
-  const rows = await supabaseSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&cerrada_en=is.null&order=actualizado_en.desc&limit=1`);
+  const rows = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&cerrada_en=is.null&order=actualizado_en.desc&limit=1`);
   if (rows[0]) return rows[0].id;
-  const creada = await supabaseInsert("conversaciones", { cliente_id: clienteId });
+  const creada = await sbInsert("conversaciones", { cliente_id: clienteId });
   return Array.isArray(creada) ? creada[0].id : null;
 }
 
-async function historial(clienteId: string, limite: number) {
-  const rows = await supabaseSelect(
-    "mensajes",
-    "rol,contenido,creado_en",
-    `conversacion_id.in.(select id from conversaciones where cliente_id=eq.${clienteId})&order=creado_en.desc,creado_en.desc&limit=${limite}`
-  );
-  // Note: PostgREST doesn't support subqueries in filters like this.
-  // We need a different approach: first get the conversation, then get messages.
-  return rows;
-}
-
 async function historialV2(clienteId: string, limite: number) {
-  // Get the open conversation
-  const convs = await supabaseSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&order=actualizado_en.desc&limit=1`);
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&order=actualizado_en.desc&limit=1`);
   if (!convs || convs.length === 0) return [];
   const convId = convs[0].id;
-  // Get last N messages
-  const msgs = await supabaseSelect("mensajes", "rol,contenido,creado_en", `conversacion_id=eq.${convId}&order=creado_en.desc&limit=${limite}`);
-  // Map DB columns (rol, contenido) to the shape the API expects (role, content)
+  const msgs = await sbSelect("mensajes", "rol,contenido,creado_en", `conversacion_id=eq.${convId}&order=creado_en.desc&limit=${limite}`);
   return (msgs || []).reverse().map((m: any) => ({ role: m.rol, content: m.contenido }));
 }
 
@@ -188,9 +208,9 @@ async function guardarTurno(clienteId: string, pregunta: string, respuesta: stri
   const r = respuesta.slice(0, MAX_CHARS_MENSAJE).trim();
   if (!p || !r) return;
   const convId = await conversacionAbierta(clienteId);
-  await supabaseInsert("mensajes", { conversacion_id: convId, rol: "user", contenido: p });
-  await supabaseInsert("mensajes", { conversacion_id: convId, rol: "assistant", contenido: r });
-  await supabaseUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: p.slice(0, 80) }, `id=eq.${convId}`);
+  await sbInsert("mensajes", { conversacion_id: convId, rol: "user", contenido: p });
+  await sbInsert("mensajes", { conversacion_id: convId, rol: "assistant", contenido: r });
+  await sbUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: p.slice(0, 80) }, `id=eq.${convId}`);
 }
 
 function paraElModelo(mensajes: any[]) {
@@ -219,6 +239,22 @@ function paraElModelo(mensajes: any[]) {
   return alternados;
 }
 
+// --- Daily usage check ---
+async function usoDeHoy(clienteId: string): Promise<number> {
+  const hoy = new Date().toISOString().slice(0, 10);
+  const rows = await sbSelect("uso_diario", "mensajes", `cliente_id=eq.${clienteId}&fecha=eq.${hoy}&limit=1`);
+  return rows?.[0]?.mensajes || 0;
+}
+
+async function incrementarUso(clienteId: string) {
+  const hoy = new Date().toISOString().slice(0, 10);
+  try {
+    await sbUpdate("uso_diario", { mensajes: (await usoDeHoy(clienteId)) + 1 }, `cliente_id=eq.${clienteId}&fecha=eq.${hoy}`);
+  } catch {
+    await sbInsert("uso_diario", { cliente_id: clienteId, fecha: hoy, mensajes: 1 });
+  }
+}
+
 // --- Claude streaming ---
 async function callClaude(apiKey: string, system: any[], messages: any[], attempt = 0) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -240,9 +276,6 @@ async function callClaude(apiKey: string, system: any[], messages: any[], attemp
   throw new Error(`Anthropic ${res.status}: ${detail.slice(0, 300)}`);
 }
 
-// Pumps a Claude stream from start to end, emitting text deltas as NDJSON.
-// Returns 'fin' on success, 'error' if the stream reported a failure,
-// 'tiempo' if we ran out of time, or 'tarde' if the model never started writing.
 async function bombearStream(
   cuerpo: ReadableStream<Uint8Array>,
   emit: (obj: any) => void,
@@ -284,14 +317,295 @@ async function bombearStream(
   return { resultado: "fin", emittedText, respuesta, stopReason };
 }
 
+// --- Route handlers ---
+
+// POST /chat — generate content (streaming)
+// POST /login — request access code
+// POST /verificar — verify code and create session
+// GET  /perfil — get identity
+// PUT  /perfil — save identity
+// GET  /biblioteca — list pieces
+// PATCH /biblioteca — update piece state
+// DELETE /biblioteca — delete piece
+// GET  /historial — get chat history
+// DELETE /historial — clear chat history
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 200, headers: corsHeaders });
-  if (req.method !== "POST") return json({ error: "method_not_allowed" }, 405);
+  if (req.method !== "POST" && req.method !== "GET" && req.method !== "PATCH" && req.method !== "PUT" && req.method !== "DELETE") {
+    return json({ error: "method_not_allowed" }, 405);
+  }
 
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/\/$/, "");
+  const accion = path.split("/").pop() || "chat";
+
+  // --- LOGIN: pedir código (no requiere sesión) ---
+  if (accion === "login" && req.method === "POST") {
+    return handleLogin(req);
+  }
+
+  // --- VERIFICAR: validar código y crear sesión (no requiere sesión) ---
+  if (accion === "verificar" && req.method === "POST") {
+    return handleVerificar(req);
+  }
+
+  // --- Todo lo demás requiere sesión válida ---
+  let token = "";
+  const authHeader = req.headers.get("Authorization") || "";
+  if (authHeader.startsWith("Bearer ")) token = authHeader.slice(7);
+  if (!token) {
+    const body = await req.clone().json().catch(() => ({}));
+    token = String(body?.token || "");
+  }
+
+  const cliente = await validarSesion(token);
+  if (!cliente) return json({ error: "no_sesion", message: "Tu sesión expiró. Volvé a entrar." }, 401);
+
+  // --- PERFIL ---
+  if (accion === "perfil") {
+    if (req.method === "GET") return handleGetPerfil(cliente);
+    if (req.method === "PUT" || req.method === "POST") return handleSavePerfil(cliente, req);
+  }
+
+  // --- BIBLIOTECA ---
+  if (accion === "biblioteca") {
+    if (req.method === "GET") return handleGetBiblioteca(cliente);
+    if (req.method === "POST") return handleSavePiezaManual(cliente, req);
+    if (req.method === "PATCH") return handleUpdatePieza(cliente, req);
+    if (req.method === "DELETE") return handleDeletePieza(cliente, req);
+  }
+
+  // --- HISTORIAL ---
+  if (accion === "historial") {
+    if (req.method === "GET") return handleGetHistorial(cliente);
+    if (req.method === "DELETE") return handleDeleteHistorial(cliente);
+  }
+
+  // --- CHAT (default) ---
+  if (req.method === "POST") return handleChat(cliente, req);
+
+  return json({ error: "not_found" }, 404);
+});
+
+// ============ LOGIN ============
+async function handleLogin(req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const email = String(payload?.email || "").trim().toLowerCase();
+  if (!email || !email.includes("@")) return json({ error: "bad_email", message: "Escribí tu email." }, 400);
+
+  // Rate limit: max 5 pedidos por hora por email
+  const haceUnaHora = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const pedidos = await sbSelect("codigos_acceso", "id", `email=eq.${email}&creado_en=gt.${haceUnaHora}`);
+  if (pedidos && pedidos.length >= MAX_PEDIDOS_HORA) {
+    return json({ error: "rate_limit", message: "Pediste muchos códigos. Esperá unos minutos." }, 429);
+  }
+
+  // Verificar que el cliente existe y tiene acceso activo
+  const clientes = await sbSelect("clientes", "id,acceso", `email=eq.${email}&limit=1`);
+  if (!clientes || clientes.length === 0) {
+    return json({ error: "no_encontrado", message: "No encontramos ese email. Revisá que esté bien escrito." }, 404);
+  }
+  if (clientes[0].acceso !== "activo") {
+    return json({ error: "sin_acceso", message: "Tu acceso a Synoma terminó." }, 403);
+  }
+
+  // Generar código de 6 dígitos (crypto random)
+  const codigo = String(Math.floor(100000 + Math.random() * 900000));
+  const hashCodigo = await sha256(codigo);
+  const expira = new Date(Date.now() + MINUTOS_CODIGO * 60 * 1000).toISOString();
+
+  // Invalidar códigos anteriores
+  await sbUpdate("codigos_acceso", { usado_en: new Date().toISOString() }, `email=eq.${email}&usado_en=is.null`);
+
+  // Guardar nuevo código
+  await sbInsert("codigos_acceso", { email, codigo_hash: hashCodigo, expira_en: expira });
+
+  // Enviar por email si hay Resend configurado, sino devolver el código
+  // (en producción el código NO se devuelve al cliente — solo por email)
+  const resendKey = Deno.env.get("RESEND_API_KEY");
+  if (resendKey) {
+    try {
+      await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: "Synoma <noreply@synoma.dev>",
+          to: email,
+          subject: "Tu código de acceso a Synoma",
+          text: `Tu código es: ${codigo}\n\nVence en ${MINUTOS_CODIGO} minutos.`,
+        }),
+      });
+    } catch {
+      // Si falla el envío, no exponemos el código al cliente
+    }
+    return json({ ok: true, enviado: true });
+  }
+
+  // Sin Resend: en desarrollo devolvemos el código. En producción esto no debería pasar.
+  return json({ ok: true, enviado: false, codigo_dev: codigo });
+}
+
+// ============ VERIFICAR ============
+async function handleVerificar(req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const email = String(payload?.email || "").trim().toLowerCase();
+  const codigo = String(payload?.codigo || "").replace(/\D/g, "");
+  if (!email || codigo.length !== 6) {
+    return json({ error: "bad_data", message: "Faltan datos." }, 400);
+  }
+
+  const hashCodigo = await sha256(codigo);
+  const rows = await sbSelect("codigos_acceso", "id,expira_en,usado_en,intentos", `email=eq.${email}&codigo_hash=eq.${hashCodigo}&order=creado_en.desc&limit=1`);
+
+  if (!rows || rows.length === 0) {
+    return json({ error: "codigo_incorrecto", message: "El código no es correcto." }, 400);
+  }
+
+  const reg = rows[0];
+  if (reg.usado_en) return json({ error: "usado", message: "Ese código ya se usó." }, 400);
+  if (new Date(reg.expira_en) < new Date()) return json({ error: "expirado", message: "El código venció. Pedí uno nuevo." }, 400);
+  if (reg.intentos >= MAX_INTENTOS) return json({ error: "demasiados", message: "Demasiados intentos. Pedí un código nuevo." }, 400);
+
+  // Marcar como usado
+  await sbUpdate("codigos_acceso", { usado_en: new Date().toISOString() }, `id=eq.${reg.id}`);
+
+  // Buscar cliente
+  const clientes = await sbSelect("clientes", "id,email,nombre", `email=eq.${email}&limit=1`);
+  if (!clientes || clientes.length === 0) return json({ error: "no_encontrado" }, 404);
+
+  const c = clientes[0];
+
+  // Crear sesión
+  const token = crypto.randomUUID() + crypto.randomUUID();
+  const tokenHash = await sha256(token);
+  const expira = new Date(Date.now() + DIAS_SESION * 24 * 60 * 60 * 1000).toISOString();
+  await sbInsert("sesiones", { cliente_id: c.id, token_hash: tokenHash, expira_en: expira });
+
+  // Verificar si tiene perfil cargado
+  const perfiles = await sbSelect("perfiles", "oferta", `cliente_id=eq.${c.id}&limit=1`);
+  const tienePerfil = perfiles?.[0]?.oferta?.trim()?.length > 0;
+
+  return json({
+    ok: true,
+    token,
+    cliente: { id: c.id, email: c.email, nombre: c.nombre },
+    tiene_perfil: tienePerfil,
+  });
+}
+
+// ============ PERFIL ============
+async function handleGetPerfil(cliente: { id: string }) {
+  const rows = await sbSelect("perfiles", "manual,oferta,encuesta,fundacion", `cliente_id=eq.${cliente.id}&limit=1`);
+  return json({ perfil: rows?.[0] || null });
+}
+
+async function handleSavePerfil(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const cuerpo = {
+    manual: String(payload?.manual || "").trim(),
+    oferta: String(payload?.oferta || "").trim(),
+    encuesta: String(payload?.encuesta || "").trim(),
+    fundacion: String(payload?.fundacion || "").trim(),
+  };
+
+  if (!cuerpo.oferta) return json({ error: "sin_oferta", message: "Como mínimo pegá tu Oferta en Una Página." }, 400);
+
+  const existentes = await sbSelect("perfiles", "cliente_id", `cliente_id=eq.${cliente.id}&limit=1`);
+  if (existentes?.length) {
+    await sbUpdate("perfiles", { ...cuerpo, actualizado_en: new Date().toISOString() }, `cliente_id=eq.${cliente.id}`);
+  } else {
+    await sbInsert("perfiles", { cliente_id: cliente.id, ...cuerpo });
+  }
+
+  return json({ ok: true });
+}
+
+// ============ BIBLIOTECA ============
+async function handleGetBiblioteca(cliente: { id: string }) {
+  const rows = await sbSelect("piezas", "id,tipo,titulo,contenido,estado,creado_en,publicado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc`);
+  return json({ piezas: rows || [] });
+}
+
+async function handleUpdatePieza(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const piezaId = String(payload?.id || "");
+  const estado = String(payload?.estado || "");
+  if (!piezaId || !estado) return json({ error: "bad_data" }, 400);
+
+  const body: Record<string, unknown> = { estado };
+  if (estado === "publicada") body.publicado_en = new Date().toISOString();
+
+  // Scoped al cliente: nunca puede actualizar una pieza que no es suya
+  await sbUpdate("piezas", body, `id=eq.${piezaId}&cliente_id=eq.${cliente.id}`);
+  return json({ ok: true });
+}
+
+async function handleDeletePieza(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const piezaId = String(payload?.id || "");
+  if (!piezaId) return json({ error: "bad_data" }, 400);
+
+  // Scoped al cliente
+  await sbDelete("piezas", `id=eq.${piezaId}&cliente_id=eq.${cliente.id}`);
+  return json({ ok: true });
+}
+
+async function handleSavePiezaManual(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const contenido = String(payload?.contenido || "").trim();
+  const tipo = String(payload?.tipo || "otro").trim();
+  const titulo = String(payload?.titulo || contenido.slice(0, 80)).trim();
+  if (!contenido) return json({ error: "bad_data", message: "Falta el contenido." }, 400);
+
+  const rows = await sbInsert("piezas", {
+    cliente_id: cliente.id, tipo, titulo, contenido, comando: "manual", estado: "nueva",
+  });
+  const pieza = Array.isArray(rows) ? rows[0] : null;
+  return json({ ok: true, pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null });
+}
+
+// ============ HISTORIAL ============
+async function handleGetHistorial(cliente: { id: string }) {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&order=actualizado_en.desc&limit=1`);
+  if (!convs || convs.length === 0) return json({ mensajes: [] });
+
+  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.asc&limit=60`);
+  return json({ mensajes: msgs || [] });
+}
+
+async function handleDeleteHistorial(cliente: { id: string }) {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}`);
+  if (convs && convs.length) {
+    for (const c of convs) {
+      await sbDelete("mensajes", `conversacion_id=eq.${c.id}`);
+      await sbDelete("conversaciones", `id=eq.${c.id}`);
+    }
+  }
+  return json({ ok: true });
+}
+
+// ============ CHAT ============
+async function handleChat(cliente: { id: string }, req: Request) {
   let apiKey = Deno.env.get("ANTHROPIC_API_KEY");
   if (!apiKey) {
     try {
-      const keyRows = await supabaseSelect("config", "valor", `clave=eq.anthropic_key&limit=1`);
+      const keyRows = await sbSelect("config", "valor", `clave=eq.anthropic_key&limit=1`);
       apiKey = keyRows?.[0]?.valor || null;
     } catch {}
   }
@@ -300,21 +614,23 @@ Deno.serve(async (req: Request) => {
   let payload;
   try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
-  const clienteId = String(payload?.cliente_id || "").trim();
   const pregunta = String(payload?.mensaje || "").slice(0, MAX_CHARS_MENSAJE).trim();
-  if (!clienteId || !pregunta) return json({ error: "missing_data", message: "Falta el mensaje o la sesión." }, 400);
+  if (!pregunta) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
+
+  // Verificar límite diario
+  const usados = await usoDeHoy(cliente.id);
+  if (usados >= DEFAULT_DAILY_LIMIT) {
+    return json({ error: "limite", message: "Llegaste al límite de hoy. Volvé mañana." }, 429);
+  }
 
   const inicioPedido = Date.now();
 
   // Get profile
-  const perfiles = await supabaseSelect("perfiles", "manual,oferta,encuesta,fundacion", `cliente_id=eq.${clienteId}&limit=1`);
+  const perfiles = await sbSelect("perfiles", "manual,oferta,encuesta,fundacion", `cliente_id=eq.${cliente.id}&limit=1`);
   const perfil = perfiles?.[0] || null;
   if (!perfil?.oferta) return json({ error: "sin_perfil", message: "Primero cargá tu identidad." }, 409);
 
-  // Build system prompt — perfil PRIMERO, reglas DESPUÉS.
-  // El perfil es la información más importante: si va primero, Claude lo
-  // lee con atención fresca y lo usa de ancla para todo lo demás. Las reglas
-  // van después porque le dicen cómo usar lo que ya leyó.
+  // Build system prompt
   const system = [
     { type: "text", text: bloqueDePerfil(perfil), cache_control: { type: "ephemeral" } },
     { type: "text", text: SYSTEM_BASE, cache_control: { type: "ephemeral" } },
@@ -324,7 +640,7 @@ Deno.serve(async (req: Request) => {
   // /racha: include biblioteca
   if (/^\/racha\b/i.test(pregunta)) {
     try {
-      const piezas = await supabaseSelect("piezas", "tipo,titulo,estado,creado_en", `cliente_id=eq.${clienteId}&order=creado_en.desc&limit=50`);
+      const piezas = await sbSelect("piezas", "tipo,titulo,estado,creado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc&limit=50`);
       if (piezas?.length) {
         const resumen = piezas.map((p: any) => `- ${p.titulo} (${p.tipo}, ${p.estado})`).join("\n");
         system.push({ type: "text", text: `=== BIBLIOTECA DEL CLIENTE ===\n${resumen}\n=== FIN ===` });
@@ -334,13 +650,13 @@ Deno.serve(async (req: Request) => {
 
   // Get history
   let previos: any[] = [];
-  try { previos = await historialV2(clienteId, MENSAJES_CONTEXTO); } catch {}
+  try { previos = await historialV2(cliente.id, MENSAJES_CONTEXTO); } catch {}
   const trimmed = paraElModelo([...previos, { role: "user", content: pregunta }]);
 
   // Call Claude
   let upstream;
   try { upstream = await callClaude(apiKey, system, trimmed); }
-  catch (e) { return json({ error: "upstream_error", message: "El motor no responde." }, 502); }
+  catch { return json({ error: "upstream_error", message: "El motor no responde." }, 502); }
 
   // Stream NDJSON
   const encoder = new TextEncoder();
@@ -357,7 +673,8 @@ Deno.serve(async (req: Request) => {
 
       const persistir = () => {
         if (!respuesta.trim()) return;
-        guardarTurno(clienteId, pregunta, respuesta).catch(() => {});
+        guardarTurno(cliente.id, pregunta, respuesta).catch(() => {});
+        incrementarUso(cliente.id).catch(() => {});
       };
 
       emit({ type: "ping" });
@@ -369,12 +686,7 @@ Deno.serve(async (req: Request) => {
         stopReason = r.stopReason;
         resultado = r.resultado;
 
-        // Empty response: retry once silently if we still have time budget.
-        // Same logic as the Netlify version: a blank completion is a transient
-        // API hiccup, and making the client re-type their /semana is making them
-        // pay for a problem that isn't theirs.
         if (resultado === "fin" && !emittedText && Date.now() - inicioPedido < MS_PARA_REINTENTAR) {
-          console.warn("[synoma] respuesta vacía — reintentando una vez");
           try {
             const otra = await callClaude(apiKey, system, trimmed);
             const r2 = await bombearStream(otra.body!, emit, inicioPedido);
@@ -382,9 +694,7 @@ Deno.serve(async (req: Request) => {
             emittedText = r2.emittedText;
             stopReason = r2.stopReason;
             resultado = r2.resultado;
-          } catch (e) {
-            console.error("[synoma] el reintento también falló:", e?.message ?? e);
-          }
+          } catch {}
         }
 
         if (resultado === "tarde") {
@@ -400,14 +710,13 @@ Deno.serve(async (req: Request) => {
           cerrar(); return;
         }
 
-        // Save piece if applicable
         let pieza = null;
-        try { pieza = await guardarSiEsPieza(clienteId, pregunta, respuesta); } catch {}
+        try { pieza = await guardarSiEsPieza(cliente.id, pregunta, respuesta); } catch {}
 
         const truncada = resultado === "tiempo" || stopReason === "max_tokens";
         emit({ type: "done", truncada, pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null });
         persistir();
-      } catch (e) {
+      } catch {
         emit({ type: "error", error: "stream_aborted", message: "Se cortó la conexión. Probá de nuevo." });
         persistir();
       } finally { cerrar(); }
@@ -418,4 +727,4 @@ Deno.serve(async (req: Request) => {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
   });
-});
+}

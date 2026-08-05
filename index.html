@@ -472,12 +472,23 @@
 <div class="demo-pill" id="demo-pill">MODO DEMO — SIN CONEXIÓN AL MOTOR</div>
 
 <script type="module">
-import { createClient } from 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm';
-
 const SUPABASE_URL = 'https://lzdzgquzucgznrmeldix.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6ZHpncXV6dWNnem5ybWVsZGl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4Njk3NTgsImV4cCI6MjEwMTQ0NTc1OH0.9Pa6SL-an_9KnQ13QWDChLdLCHEWaBhtrlqjA6fcPV8';
 const EDGE_URL = SUPABASE_URL + '/functions/v1/synoma-chat';
-const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Todas las operaciones de datos pasan por la edge function (server-side,
+// con service role key). El navegador nunca habla directo a la base.
+async function api(path, options = {}) {
+  const token = localStorage.getItem('synoma_token') || '';
+  const res = await fetch(EDGE_URL + (path ? '/' + path : ''), {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': 'Bearer ' + token } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  return res;
+}
 
 /* ---------- videos explicativos ----------------------------------------------
    Pegá acá las URLs y listo. Vacío = no se muestra nada, la app funciona igual.
@@ -572,7 +583,6 @@ function mountVideos(){
 const $ = id => document.getElementById(id);
 
 let EMAIL = '';        // solo durante el login
-let EMAIL_CLIENTE_ID = null;
 let CLIENTE = null;    // { email, nombre, id } cuando hay sesión
 let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let SENDING = false;
@@ -584,23 +594,9 @@ function show(view){
   $(view).classList.add('active');
 }
 
-// SHA-256 en el navegador para hashear el código (igual que hace el servidor)
-async function sha256(texto){
-  const buf = new TextEncoder().encode(texto);
-  const hash = await crypto.subtle.digest('SHA-256', buf);
-  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
-
-// Sesión: vive en localStorage. El token es un random string; su hash se guarda
-// en la tabla sesiones para validar.
-function tokenSesion(){ return crypto.randomUUID() + crypto.randomUUID(); }
-
-function guardarSesionLocal(cliente){
-  const token = tokenSesion();
-  localStorage.setItem('synoma_token', token);
-  localStorage.setItem('synoma_cliente', JSON.stringify(cliente));
-  return token;
-}
+// Sesión: el token lo genera el servidor al verificar el código, y se guarda
+// en localStorage. Se envía en cada pedido como Bearer token. El servidor lo
+// hashea y valida contra la tabla sesiones — el navegador nunca arma tokens.
 
 function leerSesionLocal(){
   const token = localStorage.getItem('synoma_token');
@@ -693,69 +689,53 @@ async function pedirCodigo(reenvio){
   msgLogin(reenvio ? 'Reenviando…' : 'Verificando tu acceso…', 'info');
 
   try{
-    // Busca el cliente por email directamente en Supabase
-    const { data: clientes, error } = await sb.from('clientes')
-      .select('id, email, nombre, acceso')
-      .eq('email', email)
-      .limit(1);
+    const res = await api('login', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
 
-    if(error) throw error;
-    if(!clientes || clientes.length === 0){
-      msgLogin('No encontramos ese email. Revisá que esté bien escrito.');
+    if(!res.ok){
+      if(data.error === 'no_encontrado') msgLogin('No encontramos ese email. Revisá que esté bien escrito.');
+      else if(data.error === 'sin_acceso') mostrarRenovacion(data);
+      else if(data.error === 'rate_limit') msgLogin(data.message || 'Pediste muchos códigos. Esperá unos minutos.');
+      else msgLogin('No pudimos enviarte el código. Probá de nuevo.');
       return;
     }
-
-    const cliente = clientes[0];
-    if(cliente.acceso === 'suspendido'){
-      mostrarRenovacion({ message: 'Tu acceso a Synoma terminó.' });
-      return;
-    }
-
-    // Genera código de 6 dígitos
-    const codigo = String(Math.floor(100000 + Math.random() * 900000));
-    const hash = await sha256(codigo);
-    const expira = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 min
-
-    // Guarda el código en la base
-    const { error: insErr } = await sb.from('codigos_acceso')
-      .insert({ email, codigo_hash: hash, expira_en: expira });
-
-    if(insErr) throw insErr;
 
     EMAIL = email;
-    EMAIL_CLIENTE_ID = cliente.id;
     $('email-eco').textContent = email;
     $('paso-email').hidden = true;
     $('paso-codigo').hidden = false;
     $('codigo-input').focus();
-    msgLogin('');
-    mostrarCodigoDeDesarrollo(codigo);
+
+    if(data.enviado){
+      msgLogin('Te mandamos un código de 6 números a tu email.', 'info');
+    } else if(data.codigo_dev){
+      // Sin Resend configurado: el servidor devuelve el código para desarrollo.
+      // En producción esto no debería verse nunca.
+      const caja = $('dev-codigo');
+      caja.hidden = false;
+      caja.replaceChildren();
+      const k = document.createElement('div');
+      k.className = 'dev-kicker';
+      k.textContent = 'Modo desarrollo · el email no está configurado';
+      const n = document.createElement('div');
+      n.className = 'dev-num';
+      n.textContent = data.codigo_dev;
+      const p = document.createElement('div');
+      p.className = 'dev-pie';
+      p.textContent = 'Cuando conectes el servicio de email, el código llega por mail y deja de mostrarse acá.';
+      caja.append(k, n, p);
+      msgLogin('Modo desarrollo: el código está arriba.', 'info');
+    } else {
+      msgLogin('Te mandamos un código de 6 números a tu email.', 'info');
+    }
   }catch(e){
     msgLogin('No pudimos enviarte el código. Probá de nuevo.');
   }finally{
     $('btn-email').disabled = false;
   }
-}
-
-// Solo aparece cuando el servidor no puede mandar emails (sin RESEND_API_KEY).
-// Evita tener que ir a buscar el código al log durante la puesta a punto.
-function mostrarCodigoDeDesarrollo(codigo){
-  const caja = $('dev-codigo');
-  caja.hidden = false;
-  caja.replaceChildren();
-
-  const k = document.createElement('div');
-  k.className = 'dev-kicker';
-  k.textContent = 'Modo desarrollo · el email no está configurado';
-  const n = document.createElement('div');
-  n.className = 'dev-num';
-  n.textContent = codigo;
-  const p = document.createElement('div');
-  p.className = 'dev-pie';
-  p.textContent = 'Ya lo cargamos abajo. Cuando conectes Resend, el código deja de mostrarse acá y llega por mail.';
-
-  caja.append(k, n, p);
-  $('codigo-input').value = codigo;
 }
 
 async function confirmarCodigo(){
@@ -766,65 +746,28 @@ async function confirmarCodigo(){
   msgLogin('Entrando…', 'info');
 
   try{
-    const hash = await sha256(codigo);
+    const res = await api('verificar', {
+      method: 'POST',
+      body: JSON.stringify({ email: EMAIL, codigo }),
+    });
+    const data = await res.json();
 
-    // Busca el código en la base
-    const { data: codigos, error } = await sb.from('codigos_acceso')
-      .select('id, email, expira_en, usado_en, intentos')
-      .eq('email', EMAIL)
-      .eq('codigo_hash', hash)
-      .is('usado_en', null)
-      .order('creado_en', { ascending: false })
-      .limit(1);
-
-    if(error) throw error;
-    if(!codigos || codigos.length === 0){
-      msgLogin('El código no es correcto. Probá de nuevo.');
+    if(!res.ok){
+      msgLogin(data.message || 'El código no es correcto. Probá de nuevo.');
       $('codigo-input').select();
       return;
     }
 
-    const reg = codigos[0];
-    if(new Date(reg.expira_en) < new Date()){
-      msgLogin('El código venció. Pedí uno nuevo.');
-      return;
-    }
+    // El servidor creó la sesión y nos devuelve el token.
+    // Lo guardamos en localStorage para enviarlo en cada pedido.
+    localStorage.setItem('synoma_token', data.token);
+    CLIENTE = { email: data.cliente.email, nombre: data.cliente.nombre, id: data.cliente.id };
+    localStorage.setItem('synoma_cliente', JSON.stringify(CLIENTE));
 
-    // Marca como usado
-    await sb.from('codigos_acceso')
-      .update({ usado_en: new Date().toISOString() })
-      .eq('id', reg.id);
-
-    // Busca el cliente para tener nombre
-    const { data: clientes } = await sb.from('clientes')
-      .select('id, email, nombre')
-      .eq('email', EMAIL)
-      .limit(1);
-
-    const cliente = clientes?.[0] || { id: EMAIL_CLIENTE_ID, email: EMAIL, nombre: null };
-    CLIENTE = { email: cliente.email, nombre: cliente.nombre, id: cliente.id };
-
-    // Crea la sesión en la base
-    const token = guardarSesionLocal(CLIENTE);
-    const tokenHash = await sha256(token);
-    await sb.from('sesiones').insert({
-      cliente_id: cliente.id,
-      token_hash: tokenHash,
-      expira_en: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-    });
-
-    // Actualiza ultimo_acceso
-    await sb.from('clientes').update({ ultimo_acceso_en: new Date().toISOString() }).eq('id', cliente.id);
-
+    $('dev-codigo').hidden = true;
     msgLogin('');
 
-    // ¿Tiene perfil cargado?
-    const { data: perfiles } = await sb.from('perfiles')
-      .select('oferta')
-      .eq('cliente_id', cliente.id)
-      .limit(1);
-
-    if(perfiles?.[0]?.oferta?.trim()){
+    if(data.tiene_perfil){
       entrarDash();
     } else {
       await abrirIdentidad();
@@ -859,17 +802,17 @@ async function abrirIdentidad(){
   show('view-setup');
   $('setup-msg').textContent = '';
 
-  const { data: perfiles } = await sb.from('perfiles')
-    .select('manual, oferta, encuesta, fundacion')
-    .eq('cliente_id', CLIENTE.id)
-    .limit(1);
-
-  if(perfiles?.[0]){
-    $('f-manual').value    = perfiles[0].manual    || '';
-    $('f-oferta').value    = perfiles[0].oferta    || '';
-    $('f-encuesta').value  = perfiles[0].encuesta  || '';
-    $('f-fundacion').value = perfiles[0].fundacion || '';
-  }
+  try{
+    const res = await api('perfil');
+    const data = await res.json();
+    const p = data?.perfil;
+    if(p){
+      $('f-manual').value    = p.manual    || '';
+      $('f-oferta').value    = p.oferta    || '';
+      $('f-encuesta').value  = p.encuesta  || '';
+      $('f-fundacion').value = p.fundacion || '';
+    }
+  }catch(e){ /* sin perfil cargado */ }
 }
 
 async function guardarIdentidad(){
@@ -890,20 +833,11 @@ async function guardarIdentidad(){
   $('setup-msg').textContent = 'Guardando…';
 
   try{
-    // Upsert: si existe el perfil lo actualiza, si no lo crea
-    const { data: existentes } = await sb.from('perfiles')
-      .select('cliente_id')
-      .eq('cliente_id', CLIENTE.id)
-      .limit(1);
-
-    if(existentes?.length){
-      await sb.from('perfiles')
-        .update({ ...cuerpo, actualizado_en: new Date().toISOString() })
-        .eq('cliente_id', CLIENTE.id);
-    } else {
-      await sb.from('perfiles')
-        .insert({ cliente_id: CLIENTE.id, ...cuerpo });
-    }
+    const res = await api('perfil', {
+      method: 'POST',
+      body: JSON.stringify(cuerpo),
+    });
+    if(!res.ok){ throw new Error('save_failed'); }
 
     $('setup-msg').textContent = '';
     entrarDash();
@@ -942,22 +876,10 @@ async function cargarHistorial(){
   CHAT_CARGADO = true;
 
   try{
-    // Busca la conversación más reciente
-    const { data: convs } = await sb.from('conversaciones')
-      .select('id')
-      .eq('cliente_id', CLIENTE.id)
-      .order('actualizado_en', { ascending: false })
-      .limit(1);
-
-    if(!convs || convs.length === 0) return;
-
-    const { data: mensajes } = await sb.from('mensajes')
-      .select('rol, contenido')
-      .eq('conversacion_id', convs[0].id)
-      .order('creado_en', { ascending: true })
-      .limit(60);
-
-    if(!mensajes || mensajes.length === 0) return;
+    const res = await api('historial');
+    const data = await res.json();
+    const mensajes = data?.mensajes || [];
+    if(mensajes.length === 0) return;
 
     for(const m of mensajes){
       addMsg(m.rol === 'user' ? 'user' : 'bot', m.contenido, m.rol === 'user' ? null : 'Synoma');
@@ -970,15 +892,7 @@ async function borrarHistorial(){
   if(!confirm('¿Borrar toda tu conversación con Synoma?\n\nTu identidad y tus Bases NO se borran: seguís teniendo todo cargado. Solo se borra el chat, y no se puede recuperar.')) return;
 
   try{
-    const { data: convs } = await sb.from('conversaciones')
-      .select('id')
-      .eq('cliente_id', CLIENTE.id);
-
-    if(convs && convs.length){
-      for(const c of convs){
-        await sb.from('conversaciones').delete().eq('id', c.id);
-      }
-    }
+    await api('historial', { method: 'DELETE' });
 
     $('msgs').replaceChildren();
     addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tus Bases siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
@@ -1009,14 +923,9 @@ async function abrirBiblioteca(){
   $('biblioteca-vacia').textContent = 'Abriendo tu biblioteca…';
 
   try{
-    const { data: piezas, error } = await sb.from('piezas')
-      .select('id, tipo, titulo, contenido, estado, creado_en, publicado_en')
-      .eq('cliente_id', CLIENTE.id)
-      .order('creado_en', { ascending: false });
-
-    if(error) throw error;
-
-    PIEZAS = piezas || [];
+    const res = await api('biblioteca');
+    const data = await res.json();
+    PIEZAS = data?.piezas || [];
     ETIQUETAS = {
       plan: 'Plan semanal', idea: 'Ideas', guion: 'Guion', gancho: 'Ganchos',
       historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
@@ -1170,11 +1079,13 @@ async function copiar(texto, boton){
 
 async function avanzarEstado(id, estado){
   try{
-    const body = { estado };
-    if(estado === 'publicada') body.publicado_en = new Date().toISOString();
-    await sb.from('piezas').update(body).eq('id', id);
+    const res = await api('biblioteca', {
+      method: 'PATCH',
+      body: JSON.stringify({ id, estado }),
+    });
+    if(!res.ok) throw new Error('update_failed');
     const pieza = PIEZAS.find(p => p.id === id);
-    if(pieza){ pieza.estado = estado; if(estado === 'publicada') pieza.publicado_en = body.publicado_en; }
+    if(pieza){ pieza.estado = estado; if(estado === 'publicada') pieza.publicado_en = new Date().toISOString(); }
     pintarFiltros();
     pintarGrilla();
   }catch(e){
@@ -1186,7 +1097,10 @@ async function borrarPiezaUI(p){
   if(!confirm(`¿Borrar "${p.titulo || 'esta pieza'}"?\n\nNo se puede recuperar. Si solo querés sacarla de la vista, usá Archivar.`)) return;
 
   try{
-    await sb.from('piezas').delete().eq('id', p.id);
+    await api('biblioteca', {
+      method: 'DELETE',
+      body: JSON.stringify({ id: p.id }),
+    });
     PIEZAS = PIEZAS.filter(x => x.id !== p.id);
     pintarFiltros();
     pintarGrilla();
@@ -1238,17 +1152,15 @@ async function abrirCalendario(piezaId){
   document.body.style.overflow = 'hidden';
 
   try{
-    const { data: piezas } = await sb.from('piezas')
-      .select('contenido, titulo')
-      .eq('id', piezaId)
-      .limit(1);
+    const pieza = PIEZAS.find(p => p.id === piezaId)
+      || (await (await api('biblioteca')).json())?.piezas?.find(p => p.id === piezaId);
 
-    if(!piezas?.[0]){
+    if(!pieza){
       $('cal-sub').textContent = '⚠️ No encontramos esa pieza.';
       return;
     }
 
-    const plan = parsearPlan(piezas[0].contenido || '', piezas[0].titulo);
+    const plan = parsearPlan(pieza.contenido || '', pieza.titulo);
     pintarCalendario(plan, piezaId);
   }catch(e){
     $('cal-sub').textContent = '⚠️ No pudimos armar el calendario.';
@@ -1385,11 +1297,15 @@ async function guardarAMano(texto, boton){
   boton.disabled = true;
   boton.textContent = 'Guardando…';
   try{
-    const { data } = await sb.from('piezas')
-      .insert({ cliente_id: CLIENTE.id, tipo: 'otro', titulo: texto.slice(0, 80), contenido: texto, estado: 'nueva' })
-      .select('id, tipo, titulo')
-      .limit(1);
-    boton.replaceWith(notaGuardada(data?.[0]));
+    // El guardado manual manda el texto como mensaje al chat con un prefijo
+    // que el servidor reconoce para guardarlo como pieza sin llamar a Claude.
+    const res = await api('biblioteca', {
+      method: 'POST',
+      body: JSON.stringify({ contenido: texto, tipo: 'otro', titulo: texto.slice(0, 80) }),
+    });
+    const data = await res.json();
+    if(data?.ok && data?.pieza) boton.replaceWith(notaGuardada(data.pieza));
+    else throw new Error('save_failed');
   }catch(e){
     boton.textContent = 'No se pudo';
     boton.disabled = false;
@@ -1605,10 +1521,10 @@ async function send(opciones = {}){
     // historial: el servidor sabe quién es por la cookie y lee lo demás de la
     // base. Antes iba todo desde el navegador, así que un localStorage limpio
     // mandaba un perfil vacío y Synoma escribía genérico en silencio.
-    const res = await fetch(EDGE_URL, {
+    const res = await api(null, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(pieza ? { cliente_id: CLIENTE.id, mensaje: text, continua_pieza: pieza.id } : { cliente_id: CLIENTE.id, mensaje: text }),
+      body: JSON.stringify({ mensaje: text, continua_pieza: pieza ? pieza.id : null }),
     });
 
     if(!res.ok){
@@ -1827,27 +1743,15 @@ $('codigo-input').addEventListener('input', e=>{
 
   CLIENTE = sesion.cliente;
 
-  // Valida que el cliente siga activo
+  // Valida que la sesión siga activa consultando el perfil (que requiere sesión válida)
   try{
-    const { data: clientes } = await sb.from('clientes')
-      .select('id, email, nombre, acceso')
-      .eq('id', CLIENTE.id)
-      .limit(1);
-
-    if(!clientes?.[0] || clientes[0].acceso === 'suspendido'){
+    const res = await api('perfil');
+    if(res.status === 401){
       borrarSesionLocal();
-      mostrarRenovacion({ message: 'Tu acceso a Synoma terminó.' });
-      return;
+      return; // queda en login
     }
-
-    CLIENTE = { email: clientes[0].email, nombre: clientes[0].nombre, id: clientes[0].id };
-
-    const { data: perfiles } = await sb.from('perfiles')
-      .select('oferta')
-      .eq('cliente_id', CLIENTE.id)
-      .limit(1);
-
-    if(perfiles?.[0]?.oferta?.trim()){
+    const data = await res.json();
+    if(data?.perfil?.oferta?.trim()){
       entrarDash();
     } else {
       await abrirIdentidad();
