@@ -178,9 +178,19 @@ function extraerTitulo(texto: string, tipo: string) {
   return titulo;
 }
 
+function esClarificacion(respuesta: string): boolean {
+  const limpia = respuesta.trim();
+  if (limpia.length < 800) return true;
+  if (limpia.length < 1500 && limpia.endsWith("?")) return true;
+  const primeraLinea = limpia.split("\n")[0].toLowerCase();
+  if (limpia.length < 1500 && /^(pasame|decime|para armar|para el|todav\u00eda no|necesito que|cu\u00e1l|decime el)/i.test(primeraLinea)) return true;
+  return false;
+}
+
 async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: string) {
   const det = detectarPieza(pregunta);
   if (!det) return null;
+  if (esClarificacion(respuesta)) return null;
   const titulo = extraerTitulo(respuesta, det.tipo);
   const rows = await sbInsert("piezas", {
     cliente_id: clienteId, tipo: det.tipo, titulo, contenido: respuesta, comando: det.comando, estado: "nueva",

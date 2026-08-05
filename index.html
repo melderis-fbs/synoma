@@ -1089,7 +1089,15 @@ async function avanzarEstado(id, estado){
     pintarFiltros();
     pintarGrilla();
   }catch(e){
-    alert('No pudimos actualizarla. Probá de nuevo.');
+    const card = document.querySelector(`[data-id="${id}"]`) || document.querySelector('.pieza');
+    if(card){
+      const nota = document.createElement('div');
+      nota.className = 'err-note';
+      nota.textContent = '⚠️ No pudimos actualizarla. Probá de nuevo.';
+      nota.style.marginTop = '8px';
+      card.appendChild(nota);
+      setTimeout(()=> nota.remove(), 3000);
+    }
   }
 }
 
