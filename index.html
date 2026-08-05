@@ -1078,8 +1078,9 @@ async function copiar(texto, boton){
 }
 
 async function avanzarEstado(id, estado){
+  let res;
   try{
-    const res = await api('biblioteca', {
+    res = await api('biblioteca', {
       method: 'PATCH',
       body: JSON.stringify({ id, estado }),
     });
@@ -1091,12 +1092,20 @@ async function avanzarEstado(id, estado){
   }catch(e){
     const card = document.querySelector(`[data-id="${id}"]`) || document.querySelector('.pieza');
     if(card){
+      let msg = '⚠️ No pudimos actualizarla. Probá de nuevo.';
+      try{
+        if(res){
+          const data = await res.clone().json();
+          if(data?.message) msg = '⚠️ ' + data.message;
+          if(data?.detail) msg += ' (' + data.detail + ')';
+        }
+      }catch{}
       const nota = document.createElement('div');
       nota.className = 'err-note';
-      nota.textContent = '⚠️ No pudimos actualizarla. Probá de nuevo.';
+      nota.textContent = msg;
       nota.style.marginTop = '8px';
       card.appendChild(nota);
-      setTimeout(()=> nota.remove(), 3000);
+      setTimeout(()=> nota.remove(), 5000);
     }
   }
 }

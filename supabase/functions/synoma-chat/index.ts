@@ -553,14 +553,22 @@ async function handleUpdatePieza(cliente: { id: string }, req: Request) {
 
   const piezaId = String(payload?.id || "");
   const estado = String(payload?.estado || "");
-  if (!piezaId || !estado) return json({ error: "bad_data" }, 400);
+  const ESTADOS_VALIDOS = ["nueva", "grabada", "publicada", "archivada"];
+  if (!piezaId || !ESTADOS_VALIDOS.includes(estado)) return json({ error: "bad_data" }, 400);
 
-  const body: Record<string, unknown> = { estado };
+  const body: Record<string, unknown> = {
+    estado,
+    actualizado_en: new Date().toISOString(),
+  };
   if (estado === "publicada") body.publicado_en = new Date().toISOString();
+  else body.publicado_en = null;
 
-  // Scoped al cliente: nunca puede actualizar una pieza que no es suya
-  await sbUpdate("piezas", body, `id=eq.${piezaId}&cliente_id=eq.${cliente.id}`);
-  return json({ ok: true });
+  try {
+    await sbUpdate("piezas", body, `id=eq.${piezaId}&cliente_id=eq.${cliente.id}`);
+    return json({ ok: true });
+  } catch (e) {
+    return json({ error: "db_error", message: "No pudimos actualizarla.", detail: String(e?.message || e) }, 500);
+  }
 }
 
 async function handleDeletePieza(cliente: { id: string }, req: Request) {
