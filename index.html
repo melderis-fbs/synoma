@@ -412,6 +412,11 @@
       <button class="cmd" onclick="runCmd('/persona')"><span class="em">🎯</span> A quién le hablo</button>
       <button class="cmd" onclick="runCmd('/hottakes')"><span class="em">⚡</span> Mis opiniones fuertes</button>
       <button class="cmd" onclick="runCmd('/banco')"><span class="em">📖</span> Mi banco de historias</button>
+      <div class="section-label"><b>Anuncios</b></div>
+      <button class="cmd" onclick="mostrarEnConstruccion('Estrategia')"><span class="em">🎯</span> Estrategia</button>
+      <button class="cmd" onclick="mostrarEnConstruccion('Crear anuncio')"><span class="em">📣</span> Crear anuncio</button>
+      <div class="section-label"><b>Directo</b></div>
+      <button class="cmd" onclick="mostrarEnConstruccion('Chatea con Vicky')"><span class="em">💬</span> Chatea con Vicky</button>
     </div>
     <div class="chat">
       <div class="msgs" id="msgs">
@@ -939,6 +944,14 @@ async function abrirBiblioteca(){
 }
 
 function volverAlChat(){ show('view-dash'); }
+
+function mostrarEnConstruccion(nombre){
+  const t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1a1a1a;color:#fff;padding:14px 24px;border-radius:12px;font-size:14px;z-index:9999;box-shadow:0 8px 24px rgba(0,0,0,.3);max-width:90vw;text-align:center';
+  t.innerHTML = `<b>${nombre}</b><br><span style="color:#aaa;font-size:12.5px">En construcción</span>`;
+  document.body.appendChild(t);
+  setTimeout(()=>{ t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 2500);
+}
 
 // Un chip por estado con la cuenta al lado, más los tipos que el cliente
 // realmente tiene. Mostrar filtros de tipos vacíos sería ruido.
