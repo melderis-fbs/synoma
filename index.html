@@ -758,6 +758,21 @@ async function pedirCodigo(reenvio){
       return;
     }
 
+    // Acceso directo para el equipo (@foundersbs.com): el servidor ya creó
+    // la sesión y devuelve el token. No hay código que escribir.
+    if(data.acceso_directo){
+      localStorage.setItem('synoma_token', data.token);
+      CLIENTE = { email: data.cliente.email, nombre: data.cliente.nombre, id: data.cliente.id };
+      localStorage.setItem('synoma_cliente', JSON.stringify(CLIENTE));
+      msgLogin('');
+      if(data.tiene_perfil){
+        entrarDash();
+      } else {
+        await abrirIdentidad();
+      }
+      return;
+    }
+
     EMAIL = email;
     $('email-eco').textContent = email;
     $('paso-email').hidden = true;

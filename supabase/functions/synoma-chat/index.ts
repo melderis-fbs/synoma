@@ -459,6 +459,37 @@ async function handleLogin(req: Request) {
     return json({ error: "rate_limit", message: "Pediste muchos códigos. Esperá unos minutos." }, 429);
   }
 
+  // --- Acceso directo para el equipo (@foundersbs.com) ----------------------
+  // Los coaches y el equipo entran sin código: su identidad es el dominio.
+  // Si alguien puede crear una cuenta @foundersbs.com, ya es de confianza.
+  if (email.endsWith("@foundersbs.com")) {
+    let clientes = await sbSelect("clientes", "id,acceso,nombre", `email=eq.${email}&limit=1`);
+    if (!clientes || clientes.length === 0) {
+      const creada = await sbInsert("clientes", { email, nombre: null, acceso: "activo", origen_acceso: "manual" });
+      clientes = Array.isArray(creada) ? creada : await sbSelect("clientes", "id,acceso,nombre", `email=eq.${email}&limit=1`);
+    }
+    const c = clientes[0];
+    if (c.acceso !== "activo") {
+      await sbUpdate("clientes", { acceso: "activo", origen_acceso: "manual" }, `id=eq.${c.id}`);
+    }
+
+    const token = crypto.randomUUID() + crypto.randomUUID();
+    const tokenHash = await sha256(token);
+    const expira = new Date(Date.now() + DIAS_SESION * 24 * 60 * 60 * 1000).toISOString();
+    await sbInsert("sesiones", { cliente_id: c.id, token_hash: tokenHash, expira_en: expira });
+
+    const perfiles = await sbSelect("perfiles", "oferta", `cliente_id=eq.${c.id}&limit=1`);
+    const tienePerfil = perfiles?.[0]?.oferta?.trim()?.length > 0;
+
+    return json({
+      ok: true,
+      acceso_directo: true,
+      token,
+      cliente: { id: c.id, email: c.email, nombre: c.nombre },
+      tiene_perfil: tienePerfil,
+    });
+  }
+
   // Verificar que el cliente existe y tiene acceso activo
   let clientes = await sbSelect("clientes", "id,acceso,nombre", `email=eq.${email}&limit=1`);
 
