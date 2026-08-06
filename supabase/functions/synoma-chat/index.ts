@@ -407,6 +407,43 @@ Deno.serve(async (req: Request) => {
   return json({ error: "not_found" }, 404);
 });
 
+// ============ CONFIG HELPERS ============
+async function getConfig(clave: string): Promise<string | null> {
+  try {
+    const rows = await sbSelect("config", "valor", `clave=eq.${clave}&limit=1`);
+    return rows?.[0]?.valor || null;
+  } catch { return null; }
+}
+
+// ============ GHL ============
+async function buscarEnGHL(email: string): Promise<{ estado: "activo" | "sin_tag" | "no_existe" | "error"; nombre?: string | null; ghlId?: string | null }> {
+  const token = await getConfig("ghl_token");
+  const locationId = await getConfig("ghl_location_id");
+  if (!token || !locationId) return { estado: "error" };
+
+  const tagActivo = (await getConfig("ghl_active_tag") || "synoma-activo").trim().toLowerCase();
+  const url = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&query=${encodeURIComponent(email)}`;
+
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}`, Version: "2021-07-28", Accept: "application/json" },
+    });
+  } catch { return { estado: "error" }; }
+
+  if (!res.ok) return { estado: "error" };
+  const datos = await res.json().catch(() => ({}));
+  const contactos = Array.isArray(datos?.contacts) ? datos.contacts : [];
+  const contacto = contactos.find((c: any) => String(c?.email ?? "").toLowerCase() === email);
+  if (!contacto) return { estado: "no_existe" };
+
+  const tags = (Array.isArray(contacto.tags) ? contacto.tags : []).map((t: string) => String(t).trim().toLowerCase());
+  const nombre = [contacto.firstName, contacto.lastName].filter(Boolean).join(" ") || null;
+  return tags.includes(tagActivo)
+    ? { estado: "activo", nombre, ghlId: contacto.id ?? null }
+    : { estado: "sin_tag", nombre, ghlId: contacto.id ?? null };
+}
+
 // ============ LOGIN ============
 async function handleLogin(req: Request) {
   let payload;
@@ -423,7 +460,23 @@ async function handleLogin(req: Request) {
   }
 
   // Verificar que el cliente existe y tiene acceso activo
-  const clientes = await sbSelect("clientes", "id,acceso", `email=eq.${email}&limit=1`);
+  let clientes = await sbSelect("clientes", "id,acceso,nombre", `email=eq.${email}&limit=1`);
+
+  // Si no está en la base, consultar GHL (fuente de verdad) y auto-darlo de alta
+  if (!clientes || clientes.length === 0) {
+    const ghl = await buscarEnGHL(email);
+    if (ghl.estado === "activo") {
+      await sbInsert("clientes", { email, nombre: ghl.nombre, acceso: "activo", origen_acceso: "founders", ghl_contact_id: ghl.ghlId });
+      clientes = await sbSelect("clientes", "id,acceso,nombre", `email=eq.${email}&limit=1`);
+    } else if (ghl.estado === "sin_tag") {
+      return json({ error: "sin_acceso", message: "Tu acceso a Synoma terminó." }, 403);
+    } else if (ghl.estado === "no_existe") {
+      return json({ error: "no_encontrado", message: "No encontramos ese email. Revisá que esté bien escrito." }, 404);
+    } else {
+      return json({ error: "verificacion_no_disponible", message: "No podemos verificar tu acceso en este momento. Probá en unos minutos." }, 503);
+    }
+  }
+
   if (!clientes || clientes.length === 0) {
     return json({ error: "no_encontrado", message: "No encontramos ese email. Revisá que esté bien escrito." }, 404);
   }
@@ -444,7 +497,8 @@ async function handleLogin(req: Request) {
 
   // Enviar por email si hay Resend configurado, sino devolver el código
   // (en producción el código NO se devuelve al cliente — solo por email)
-  const resendKey = Deno.env.get("RESEND_API_KEY");
+  const resendKey = Deno.env.get("RESEND_API_KEY") || await getConfig("resend_api_key");
+  const remitente = await getConfig("email_remitente") || "Synoma <noreply@synoma.dev>";
   if (resendKey) {
     try {
       await fetch("https://api.resend.com/emails", {
@@ -454,7 +508,7 @@ async function handleLogin(req: Request) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          from: "Synoma <noreply@synoma.dev>",
+          from: remitente,
           to: email,
           subject: "Tu código de acceso a Synoma",
           text: `Tu código es: ${codigo}\n\nVence en ${MINUTOS_CODIGO} minutos.`,
