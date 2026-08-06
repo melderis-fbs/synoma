@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { SYSTEM_BASE } from "./_prompt.ts";
 import { CONOCIMIENTO } from "./_conocimiento.ts";
+import { VICKY_SYSTEM } from "./_vicky.ts";
 
 const MODEL = "claude-sonnet-5";
 const MAX_TOKENS = Number(Deno.env.get("SYNOMA_MAX_TOKENS")) || 8000;
@@ -199,26 +200,26 @@ async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: 
 }
 
 // --- Conversation helpers ---
-async function conversacionAbierta(clienteId: string) {
-  const rows = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&cerrada_en=is.null&order=actualizado_en.desc&limit=1`);
+async function conversacionAbierta(clienteId: string, tipo: string = "synoma") {
+  const rows = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&tipo=eq.${tipo}&cerrada_en=is.null&order=actualizado_en.desc&limit=1`);
   if (rows[0]) return rows[0].id;
-  const creada = await sbInsert("conversaciones", { cliente_id: clienteId });
+  const creada = await sbInsert("conversaciones", { cliente_id: clienteId, tipo });
   return Array.isArray(creada) ? creada[0].id : null;
 }
 
-async function historialV2(clienteId: string, limite: number) {
-  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&order=actualizado_en.desc&limit=1`);
+async function historialV2(clienteId: string, limite: number, tipo: string = "synoma") {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&tipo=eq.${tipo}&order=actualizado_en.desc&limit=1`);
   if (!convs || convs.length === 0) return [];
   const convId = convs[0].id;
   const msgs = await sbSelect("mensajes", "rol,contenido,creado_en", `conversacion_id=eq.${convId}&order=creado_en.desc&limit=${limite}`);
   return (msgs || []).reverse().map((m: any) => ({ role: m.rol, content: m.contenido }));
 }
 
-async function guardarTurno(clienteId: string, pregunta: string, respuesta: string) {
+async function guardarTurno(clienteId: string, pregunta: string, respuesta: string, tipo: string = "synoma") {
   const p = pregunta.slice(0, MAX_CHARS_MENSAJE).trim();
   const r = respuesta.slice(0, MAX_CHARS_MENSAJE).trim();
   if (!p || !r) return;
-  const convId = await conversacionAbierta(clienteId);
+  const convId = await conversacionAbierta(clienteId, tipo);
   await sbInsert("mensajes", { conversacion_id: convId, rol: "user", contenido: p });
   await sbInsert("mensajes", { conversacion_id: convId, rol: "assistant", contenido: r });
   await sbUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: p.slice(0, 80) }, `id=eq.${convId}`);
@@ -391,6 +392,13 @@ Deno.serve(async (req: Request) => {
   if (accion === "historial") {
     if (req.method === "GET") return handleGetHistorial(cliente);
     if (req.method === "DELETE") return handleDeleteHistorial(cliente);
+  }
+
+  // --- VICKY CHAT ---
+  if (accion === "vicky-chat") {
+    if (req.method === "GET") return handleGetHistorialVicky(cliente);
+    if (req.method === "POST") return handleVickyChat(cliente, req);
+    if (req.method === "DELETE") return handleDeleteHistorialVicky(cliente);
   }
 
   // --- CHAT (default) ---
@@ -617,6 +625,149 @@ async function handleDeleteHistorial(cliente: { id: string }) {
     }
   }
   return json({ ok: true });
+}
+
+// ============ VICKY CHAT ============
+async function handleGetHistorialVicky(cliente: { id: string }) {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&tipo=eq.vicky&order=actualizado_en.desc&limit=1`);
+  if (!convs || convs.length === 0) return json({ mensajes: [] });
+  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.asc&limit=60`);
+  return json({ mensajes: msgs || [] });
+}
+
+async function handleDeleteHistorialVicky(cliente: { id: string }) {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&tipo=eq.vicky`);
+  if (convs && convs.length) {
+    for (const c of convs) {
+      await sbDelete("mensajes", `conversacion_id=eq.${c.id}`);
+      await sbDelete("conversaciones", `id=eq.${c.id}`);
+    }
+  }
+  return json({ ok: true });
+}
+
+async function handleVickyChat(cliente: { id: string }, req: Request) {
+  let apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) {
+    try {
+      const keyRows = await sbSelect("config", "valor", `clave=eq.anthropic_key&limit=1`);
+      apiKey = keyRows?.[0]?.valor || null;
+    } catch {}
+  }
+  if (!apiKey) return json({ error: "not_configured", message: "El motor no está configurado." }, 503);
+
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const pregunta = String(payload?.mensaje || "").slice(0, MAX_CHARS_MENSAJE).trim();
+  if (!pregunta) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
+
+  const usados = await usoDeHoy(cliente.id);
+  if (usados >= DEFAULT_DAILY_LIMIT) {
+    return json({ error: "limite", message: "Llegaste al límite de hoy. Volvé mañana." }, 429);
+  }
+
+  const inicioPedido = Date.now();
+
+  const perfiles = await sbSelect("perfiles", "manual,oferta,encuesta,fundacion", `cliente_id=eq.${cliente.id}&limit=1`);
+  const perfil = perfiles?.[0] || null;
+  if (!perfil?.oferta) return json({ error: "sin_perfil", message: "Primero cargá tu identidad." }, 409);
+
+  // Historial del chat con Vicky (su propia conversación)
+  let previosVicky: any[] = [];
+  try { previosVicky = await historialV2(cliente.id, MENSAJES_CONTEXTO, "vicky"); } catch {}
+
+  // Historial del chat con Synoma (para que Vicky sepa de qué venían hablando)
+  let previosSynoma: any[] = [];
+  try { previosSynoma = await historialV2(cliente.id, Math.floor(MENSAJES_CONTEXTO / 2), "synoma"); } catch {}
+
+  // El historial de Synoma se resume como contexto para Vicky, no como su propia conversación
+  let contextoSynoma = "";
+  if (previosSynoma.length > 0) {
+    const resumen = previosSynoma
+      .map((m: any) => `${m.role === "user" ? "Cliente" : "Synoma"}: ${m.content.slice(0, 500)}`)
+      .join("\n");
+    contextoSynoma = `\n\n=== CONTEXTO: conversación previa con Synoma (el motor de contenido) ===\n${resumen}\n=== FIN DEL CONTEXTO ===\nUsá este contexto para no pedirle a la cliente que repita lo que ya le dijo a Synoma.`;
+  }
+
+  const system = [
+    { type: "text", text: bloqueDePerfil(perfil), cache_control: { type: "ephemeral" } },
+    { type: "text", text: VICKY_SYSTEM, cache_control: { type: "ephemeral" } },
+    { type: "text", text: CONOCIMIENTO, cache_control: { type: "ephemeral" } },
+    { type: "text", text: bloqueDeFecha() + contextoSynoma },
+  ];
+
+  const trimmed = paraElModelo([...previosVicky, { role: "user", content: pregunta }]);
+
+  let upstream;
+  try { upstream = await callClaude(apiKey, system, trimmed); }
+  catch { return json({ error: "upstream_error", message: "El motor no responde." }, 502); }
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (obj: any) => controller.enqueue(encoder.encode(JSON.stringify(obj) + "\n"));
+      let cerrado = false;
+      const cerrar = () => { if (cerrado) return; cerrado = true; try { controller.close(); } catch {} };
+
+      let respuesta = "";
+      let emittedText = false;
+      let stopReason: string | null = null;
+      let resultado = "fin";
+
+      const persistir = () => {
+        if (!respuesta.trim()) return;
+        guardarTurno(cliente.id, pregunta, respuesta, "vicky").catch(() => {});
+        incrementarUso(cliente.id).catch(() => {});
+      };
+
+      emit({ type: "ping" });
+
+      try {
+        const r = await bombearStream(upstream.body!, emit, inicioPedido);
+        respuesta = r.respuesta;
+        emittedText = r.emittedText;
+        stopReason = r.stopReason;
+        resultado = r.resultado;
+
+        if (resultado === "fin" && !emittedText && Date.now() - inicioPedido < MS_PARA_REINTENTAR) {
+          try {
+            const otra = await callClaude(apiKey, system, trimmed);
+            const r2 = await bombearStream(otra.body!, emit, inicioPedido);
+            respuesta = r2.respuesta;
+            emittedText = r2.emittedText;
+            stopReason = r2.stopReason;
+            resultado = r2.resultado;
+          } catch {}
+        }
+
+        if (resultado === "tarde") {
+          emit({ type: "error", error: "demasiado_lento", message: "Vicky tardó demasiado. Probá de nuevo." });
+          cerrar(); return;
+        }
+        if (resultado === "error") {
+          emit({ type: "error", error: "stream_error", message: "Se cortó la conexión. Probá de nuevo." });
+          persistir(); cerrar(); return;
+        }
+        if (!emittedText) {
+          emit({ type: "error", error: "empty_response", message: "Vicky no respondió. Volvé a mandar el mensaje." });
+          cerrar(); return;
+        }
+
+        const truncada = resultado === "tiempo" || stopReason === "max_tokens";
+        emit({ type: "done", truncada, pieza: null });
+        persistir();
+      } catch {
+        emit({ type: "error", error: "stream_aborted", message: "Se cortó la conexión. Probá de nuevo." });
+        persistir();
+      } finally { cerrar(); }
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: { ...corsHeaders, "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
+  });
 }
 
 // ============ CHAT ============
