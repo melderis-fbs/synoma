@@ -76,8 +76,9 @@
 
   /* ---------- DASHBOARD ---------- */
   #view-dash.active{display:flex;flex-direction:column;height:100vh}
-  .dash-body{display:flex;flex:1;min-height:0}
-  .cmds{width:264px;border-right:1px solid var(--border);padding:8px 16px 20px;overflow-y:auto;background:var(--bg)}
+  .dash-body{display:flex;flex:1;min-height:0;position:relative}
+  .mobile-cmd-toggle,.cmds-backdrop{display:none}
+  .cmds{width:264px;border-right:1px solid var(--border);padding:8px 16px 20px;overflow-y:auto;background:var(--bg);z-index:70}
   .cmds .section-label{margin:22px 0 10px}
   .cmds .section-label b{font-size:10.5px;color:var(--beige-d)}
   .cmd{display:flex;align-items:center;gap:11px;width:100%;background:var(--bg);border:1px solid var(--border2);border-radius:12px;
@@ -272,13 +273,18 @@
     #view-login .hero{padding:44px 20px 32px}
     #view-setup h2{font-size:27px}
     .dash-body{flex-direction:column}
-    /* Antes esto era .cmds{display:none}: en el celular desaparecía TODO el
-       menú de comandos y el cliente no tenía forma de descubrir /semana.
-       Ahora es una fila horizontal que se desliza con el dedo. */
-    .cmds{width:100%;flex:0 0 auto;border-right:none;border-bottom:1px solid var(--border);
-      display:flex;gap:8px;overflow-x:auto;padding:12px 14px;-webkit-overflow-scrolling:touch}
-    .cmds .section-label{display:none}
-    .cmd{margin-bottom:0;flex:0 0 auto;white-space:nowrap}
+    .mobile-cmd-toggle{display:inline-flex;align-items:center;gap:7px;background:none;border:1px solid #3a3a3a;
+      border-radius:99px;color:#fff;padding:8px 12px;font:700 10px 'Inter',sans-serif;letter-spacing:.08em;
+      text-transform:uppercase;cursor:pointer}
+    .mobile-cmd-toggle .hamb{font-size:16px;line-height:1}
+    .cmds-backdrop{display:block;position:fixed;inset:var(--nav-h) 0 0;background:rgba(17,17,17,.42);z-index:60;
+      opacity:0;pointer-events:none;transition:opacity .2s}
+    .cmds-backdrop.on{opacity:1;pointer-events:auto}
+    .cmds{position:fixed;top:var(--nav-h);bottom:0;left:0;width:min(82vw,300px);border-right:1px solid var(--border);
+      padding:14px 16px 24px;overflow-y:auto;transform:translateX(-105%);transition:transform .22s ease;
+      box-shadow:8px 0 24px rgba(17,17,17,.12)}
+    .cmds.open{transform:translateX(0)}
+    .cmd{margin-bottom:8px}
     .msgs{padding:20px 16px}
     .msg{max-width:100%}
     .composer{padding:12px 14px}
@@ -396,6 +402,7 @@
 <div class="view" id="view-dash">
   <div class="nav">
     <div class="word">SYN<span>O</span>MA</div>
+    <button class="mobile-cmd-toggle" type="button" aria-controls="command-menu" aria-expanded="false" onclick="toggleMobileCmds()"><span class="hamb">☰</span> Menú</button>
     <div class="menu">
       <span class="who" id="who"></span>
       <button onclick="abrirBiblioteca()">Mis contenidos</button>
@@ -405,7 +412,8 @@
     </div>
   </div>
   <div class="dash-body">
-    <div class="cmds">
+    <div class="cmds-backdrop" id="cmds-backdrop" onclick="toggleMobileCmds(false)"></div>
+    <div class="cmds" id="command-menu" onclick="if(event.target.closest('.cmd')) toggleMobileCmds(false)">
       <div class="section-label"><b>Empezá acá</b></div>
       <button class="cmd" onclick="runCmd('/fundacion')"><span class="em">📐</span> Armar mis Bases</button>
       <div class="section-label"><b>Planificar</b></div>
@@ -916,6 +924,17 @@ async function guardarIdentidad(){
   }finally{
     $('btn-guardar').disabled = false;
   }
+}
+
+function toggleMobileCmds(force){
+  const cmds = $('command-menu');
+  const backdrop = $('cmds-backdrop');
+  const toggle = document.querySelector('.mobile-cmd-toggle');
+  if(!cmds || !backdrop || !toggle) return;
+  const open = typeof force === 'boolean' ? force : !cmds.classList.contains('open');
+  cmds.classList.toggle('open', open);
+  backdrop.classList.toggle('on', open);
+  toggle.setAttribute('aria-expanded', String(open));
 }
 
 function entrarDash(){
