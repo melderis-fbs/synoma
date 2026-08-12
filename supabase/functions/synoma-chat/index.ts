@@ -216,25 +216,69 @@ async function historialV2(clienteId: string, limite: number, tipo: string = "sy
 }
 
 async function guardarTurno(clienteId: string, pregunta: string, respuesta: string, tipo: string = "synoma") {
-  const p = pregunta.slice(0, MAX_CHARS_MENSAJE).trim();
+  const p = (pregunta || "").slice(0, MAX_CHARS_MENSAJE).trim();
   const r = respuesta.slice(0, MAX_CHARS_MENSAJE).trim();
-  if (!p || !r) return;
+  if (!r) return;
+  const textoGuardar = p || "(archivo adjunto)";
   const convId = await conversacionAbierta(clienteId, tipo);
-  await sbInsert("mensajes", { conversacion_id: convId, rol: "user", contenido: p });
+  await sbInsert("mensajes", { conversacion_id: convId, rol: "user", contenido: textoGuardar });
   await sbInsert("mensajes", { conversacion_id: convId, rol: "assistant", contenido: r });
-  await sbUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: p.slice(0, 80) }, `id=eq.${convId}`);
+  await sbUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: textoGuardar.slice(0, 80) }, `id=eq.${convId}`);
+}
+
+// Convierte los archivos que manda el navegador (base64 o texto) en bloques de
+// contenido para Claude. Imágenes y PDFs se mandan nativamente; CSV y Excel se
+// mandan como texto extraído porque Claude no los parsea binarios.
+function archivosABloques(archivos: any[]): any[] {
+  if (!Array.isArray(archivos) || !archivos.length) return [];
+  const bloques: any[] = [];
+  for (const a of archivos) {
+    if (!a || !a.type) continue;
+    if (a.type === "image" && a.data) {
+      bloques.push({
+        type: "image",
+        source: { type: "base64", media_type: a.media_type || "image/png", data: a.data },
+      });
+    } else if (a.type === "pdf" && a.data) {
+      bloques.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: a.data },
+      });
+    } else if (a.type === "text" && a.content) {
+      const etiqueta = a.name ? `=== ARCHIVO: ${a.name} ===\n` : "";
+      bloques.push({ type: "text", text: `${etiqueta}${a.content}\n=== FIN DEL ARCHIVO ===` });
+    }
+  }
+  return bloques;
+}
+
+function construirMensajeUsuario(pregunta: string, archivos: any[]): any {
+  const bloques = archivosABloques(archivos);
+  if (!bloques.length) return pregunta;
+  const texto = pregunta || "Te adjunto archivos para que los revises.";
+  return [{ type: "text", text }, ...bloques];
 }
 
 function paraElModelo(mensajes: any[]) {
   let limpios = mensajes
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({ role: m.role, content: String(m.content || "").slice(0, MAX_CHARS_MENSAJE) }))
-    .filter((m) => m.content.trim().length > 0);
+    .map((m) => {
+      const content = m.content;
+      // Si el contenido ya es un array (bloques de Claude), lo dejamos como está.
+      if (Array.isArray(content)) return { role: m.role, content };
+      return { role: m.role, content: String(content || "").slice(0, MAX_CHARS_MENSAJE) };
+    })
+    .filter((m) => {
+      if (Array.isArray(m.content)) return m.content.length > 0;
+      return m.content.trim().length > 0;
+    });
 
   let total = 0;
   const dentro: any[] = [];
   for (let i = limpios.length - 1; i >= 0; i--) {
-    total += limpios[i].content.length;
+    const c = limpios[i].content;
+    const len = Array.isArray(c) ? c.reduce((n: number, b: any) => n + (typeof b.text === "string" ? b.text.length : 1000), 0) : c.length;
+    total += len;
     if (total > MAX_CHARS_CONTEXTO && dentro.length > 0) break;
     dentro.unshift(limpios[i]);
   }
@@ -245,8 +289,16 @@ function paraElModelo(mensajes: any[]) {
   const alternados: any[] = [];
   for (const m of limpios) {
     const anterior = alternados[alternados.length - 1];
-    if (anterior && anterior.role === m.role) anterior.content += `\n\n${m.content}`;
-    else alternados.push({ ...m });
+    if (anterior && anterior.role === m.role) {
+      // Solo fusionar si ambos son texto plano
+      if (!Array.isArray(anterior.content) && !Array.isArray(m.content)) {
+        anterior.content += `\n\n${m.content}`;
+      } else {
+        alternados.push({ ...m });
+      }
+    } else {
+      alternados.push({ ...m });
+    }
   }
   return alternados;
 }
@@ -745,7 +797,8 @@ async function handleVickyChat(cliente: { id: string }, req: Request) {
   try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
   const pregunta = String(payload?.mensaje || "").slice(0, MAX_CHARS_MENSAJE).trim();
-  if (!pregunta) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
+  const archivos = Array.isArray(payload?.archivos) ? payload.archivos : [];
+  if (!pregunta && !archivos.length) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
 
   const usados = await usoDeHoy(cliente.id);
   if (usados >= DEFAULT_DAILY_LIMIT) {
@@ -782,7 +835,8 @@ async function handleVickyChat(cliente: { id: string }, req: Request) {
     { type: "text", text: bloqueDeFecha() + contextoSynoma },
   ];
 
-  const trimmed = paraElModelo([...previosVicky, { role: "user", content: pregunta }]);
+  const contenidoUsuario = construirMensajeUsuario(pregunta, archivos);
+  const trimmed = paraElModelo([...previosVicky, { role: "user", content: contenidoUsuario }]);
 
   let upstream;
   try { upstream = await callClaude(apiKey, system, trimmed); }
@@ -870,7 +924,8 @@ async function handleChat(cliente: { id: string }, req: Request) {
   try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
   const pregunta = String(payload?.mensaje || "").slice(0, MAX_CHARS_MENSAJE).trim();
-  if (!pregunta) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
+  const archivos = Array.isArray(payload?.archivos) ? payload.archivos : [];
+  if (!pregunta && !archivos.length) return json({ error: "missing_data", message: "Falta el mensaje." }, 400);
 
   // Verificar límite diario
   const usados = await usoDeHoy(cliente.id);
@@ -907,7 +962,8 @@ async function handleChat(cliente: { id: string }, req: Request) {
   // Get history
   let previos: any[] = [];
   try { previos = await historialV2(cliente.id, MENSAJES_CONTEXTO); } catch {}
-  const trimmed = paraElModelo([...previos, { role: "user", content: pregunta }]);
+  const contenidoUsuario = construirMensajeUsuario(pregunta, archivos);
+  const trimmed = paraElModelo([...previos, { role: "user", content: contenidoUsuario }]);
 
   // Call Claude
   let upstream;

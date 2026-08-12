@@ -106,6 +106,20 @@
   .composer textarea{flex:1;background:var(--paper);border:1px solid var(--border);border-radius:12px;padding:14px 16px;
     color:var(--ink);font-size:14px;resize:none;height:52px;outline:none;font-family:'Inter',sans-serif}
   .composer textarea:focus{border-color:var(--beige);background:#fff}
+  .composer-wrap{display:flex;flex-direction:column;gap:0}
+  .attach-row{display:flex;gap:8px;flex-wrap:wrap;padding:0 26px 0}
+  .attach-btn{display:inline-flex;align-items:center;gap:6px;background:none;border:1px solid var(--border);
+    border-radius:99px;padding:7px 14px;font-size:12px;font-weight:700;color:var(--muted);cursor:pointer;
+    font-family:'Inter',sans-serif;transition:all .12s;position:relative;overflow:hidden}
+  .attach-btn:hover{border-color:var(--beige);color:var(--ink)}
+  .attach-btn input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+  .attach-chip{display:inline-flex;align-items:center;gap:8px;background:var(--cream);border:1px solid var(--border);
+    border-radius:99px;padding:6px 12px;font-size:12px;font-weight:600;color:var(--ink);max-width:240px}
+  .attach-chip .att-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .attach-chip .att-x{background:none;border:none;color:var(--soft);cursor:pointer;font-size:16px;
+    line-height:1;padding:0 0 2px;font-family:'Inter',sans-serif}
+  .attach-chip .att-x:hover{color:#e25950}
+  .attach-chip .att-ic{font-size:15px}
   .typing{color:var(--muted);font-size:13px;padding:0 36px 10px;display:none;background:var(--paper)}
   /* ---------- CHAT CON VICKY ---------- */
   .vicky-body{display:flex;flex-direction:column;height:calc(100vh - var(--nav-h));max-width:680px;margin:0 auto;background:var(--paper)}
@@ -459,6 +473,12 @@
         <textarea id="input" placeholder="Escribile a Synoma… (Enter para enviar)"></textarea>
         <button class="btn" id="send-btn" onclick="send()">Enviar</button>
       </div>
+      <div class="attach-row" style="padding-top:8px">
+        <label class="attach-btn">📎 Adjuntar
+          <input type="file" id="file-input" accept=".pdf,.csv,.xlsx,.xls,image/*" multiple onchange="onFilesPicked(this,'synoma')">
+        </label>
+        <div id="attach-chips-synoma" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -493,6 +513,12 @@
     <div class="composer">
       <textarea id="input-vicky" placeholder="Escribile a Vicky… (Enter para enviar)"></textarea>
       <button class="btn" id="send-vicky-btn" onclick="sendVicky()">Enviar</button>
+    </div>
+    <div class="attach-row" style="padding-top:8px">
+      <label class="attach-btn">📎 Adjuntar
+        <input type="file" id="file-input-vicky" accept=".pdf,.csv,.xlsx,.xls,image/*" multiple onchange="onFilesPicked(this,'vicky')">
+      </label>
+      <div id="attach-chips-vicky" style="display:flex;gap:6px;flex-wrap:wrap"></div>
     </div>
   </div>
 </div>
@@ -651,6 +677,118 @@ let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let SENDING = false;
 let CHAT_CARGADO = false;   // para no volver a pedir el historial en cada entrada
 let ULTIMO_MENSAJE = '';    // para el botón de reintentar sin reescribir el pedido
+
+// --- Archivos adjuntos en el chat ---
+// Se leen como base64 en el navegador y se mandan al edge function, que los
+// convierte en bloques de contenido para Claude (imágenes/PDF nativos, CSV y
+// Excel como texto extraído). El límite de tamaño evita mandar archivos que el
+// servidor no puede procesar dentro del tiempo de la función.
+const MAX_FILE_BYTES = 5_000_000; // 5 MB por archivo
+const FILE_ICONS = { pdf:'📄', csv:'📊', xlsx:'📊', xls:'📊', png:'🖼️', jpg:'🖼️', jpeg:'🖼️', gif:'🖼️', webp:'🖼️' };
+let pendingFilesSynoma = [];
+let pendingFilesVicky = [];
+
+function fileIcon(name){
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  return FILE_ICONS[ext] || '📎';
+}
+
+function onFilesPicked(input, chat){
+  const files = Array.from(input.files || []);
+  for(const f of files){
+    if(f.size > MAX_FILE_BYTES){
+      const caja = chat === 'vicky' ? startMsgVicky('bot','Synoma') : startMsg('bot','Synoma');
+      caja.appendChild(errorNote(`"${f.name}" pesa más de 5 MB. Probá con un archivo más chico.`));
+      scrollDown();
+      continue;
+    }
+    const arr = chat === 'vicky' ? pendingFilesVicky : pendingFilesSynoma;
+    arr.push(f);
+  }
+  input.value = '';
+  renderAttachChips(chat);
+}
+
+function renderAttachChips(chat){
+  const arr = chat === 'vicky' ? pendingFilesVicky : pendingFilesSynoma;
+  const cont = $('attach-chips-' + chat);
+  if(!cont) return;
+  cont.replaceChildren();
+  for(let i = 0; i < arr.length; i++){
+    const f = arr[i];
+    const chip = document.createElement('span');
+    chip.className = 'attach-chip';
+    const ic = document.createElement('span');
+    ic.className = 'att-ic';
+    ic.textContent = fileIcon(f.name);
+    const nm = document.createElement('span');
+    nm.className = 'att-name';
+    nm.textContent = f.name;
+    const x = document.createElement('button');
+    x.className = 'att-x';
+    x.textContent = '×';
+    x.onclick = () => {
+      arr.splice(i, 1);
+      renderAttachChips(chat);
+    };
+    chip.append(ic, nm, x);
+    cont.appendChild(chip);
+  }
+}
+
+function clearAttachChips(chat){
+  if(chat === 'vicky') pendingFilesVicky = [];
+  else pendingFilesSynoma = [];
+  renderAttachChips(chat);
+}
+
+async function readFileAsDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+async function readFileAsText(file){
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+    r.readAsText(file);
+  });
+}
+
+async function prepareFiles(chat){
+  const arr = chat === 'vicky' ? pendingFilesVicky : pendingFilesSynoma;
+  if(!arr.length) return [];
+  const out = [];
+  for(const f of arr){
+    const ext = (f.name.split('.').pop() || '').toLowerCase();
+    const isImage = ['png','jpg','jpeg','gif','webp'].includes(ext);
+    const isPdf = ext === 'pdf';
+    const isCsv = ext === 'csv';
+    const isExcel = ['xlsx','xls'].includes(ext);
+    if(isImage || isPdf){
+      const dataUrl = await readFileAsDataUrl(f);
+      const base64 = dataUrl.split(',')[1];
+      out.push({
+        type: isPdf ? 'pdf' : 'image',
+        media_type: isPdf ? 'application/pdf' : f.type || 'image/png',
+        data: base64,
+        name: f.name,
+      });
+    } else if(isCsv || isExcel){
+      const text = await readFileAsText(f);
+      out.push({ type: 'text', name: f.name, content: text.slice(0, 50000) });
+    } else {
+      const text = await readFileAsText(f);
+      out.push({ type: 'text', name: f.name, content: text.slice(0, 50000) });
+    }
+  }
+  return out;
+}
 
 function show(view){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
@@ -1126,7 +1264,8 @@ const PEDIDO_CONTINUAR_VICKY = 'Seguí exactamente desde donde te cortaste. No r
 async function sendVicky(opciones = {}){
   if(SENDING_VICKY) return;
   const text = $('input-vicky').value.trim();
-  if(!text) return;
+  const archivos = pendingFilesVicky;
+  if(!text && !archivos.length) return;
 
   const { burbuja = null, tramo = 1 } = opciones;
 
@@ -1134,7 +1273,15 @@ async function sendVicky(opciones = {}){
   ULTIMO_MENSAJE_VICKY = text;
   $('send-vicky-btn').disabled = true;
   $('input-vicky').value=''; $('input-vicky').placeholder='Escribile a Vicky… (Enter para enviar)';
-  if(!burbuja) addMsgVicky('user', text);
+
+  let archivosPayload = [];
+  if(!burbuja && archivos.length){
+    try{ archivosPayload = await prepareFiles('vicky'); }
+    catch{ archivosPayload = []; }
+    clearAttachChips('vicky');
+  }
+
+  if(!burbuja) addMsgVicky('user', text || (archivos.length === 1 ? `📎 ${archivos[0].name}` : `📎 ${archivos.length} archivos`));
   $('typing-vicky').style.display='block';
 
   let body = burbuja;
@@ -1144,7 +1291,7 @@ async function sendVicky(opciones = {}){
     const res = await api('vicky-chat', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ mensaje: text }),
+      body: JSON.stringify({ mensaje: text, archivos: archivosPayload }),
     });
 
     if(!res.ok){
@@ -1835,7 +1982,8 @@ const PEDIDO_CONTINUAR = 'Seguí exactamente desde donde te cortaste. No repitas
 async function send(opciones = {}){
   if(SENDING) return;                    // evita doble envío con Enter repetido
   const text = $('input').value.trim();
-  if(!text) return;
+  const archivos = pendingFilesSynoma;
+  if(!text && !archivos.length) return;
 
   const { burbuja = null, tramo = 1, pieza = null } = opciones;
 
@@ -1845,11 +1993,20 @@ async function send(opciones = {}){
   $('input').value=''; $('input').placeholder='Escribile a Synoma… (Enter para enviar)';
   // En una continuación no se pinta el pedido: el cliente no lo escribió y verlo
   // rompería la ilusión de una sola respuesta.
-  if(!burbuja) addMsg('user', text);
+  if(!burbuja) addMsg('user', text || (archivos.length === 1 ? `📎 ${archivos[0].name}` : `📎 ${archivos.length} archivos`));
   $('typing').style.display='block';
 
   let body = burbuja;   // burbuja de la respuesta; se crea al primer fragmento
   let acc = burbuja ? burbuja.dataset.texto || '' : '';   // texto acumulado
+
+  // Los archivos se leen como base64/texto y se mandan junto con el mensaje.
+  // Solo se mandan en el primer tramo; las continuaciones no los reenvían.
+  let archivosPayload = [];
+  if(!burbuja && archivos.length){
+    try{ archivosPayload = await prepareFiles('synoma'); }
+    catch{ archivosPayload = []; }
+    clearAttachChips('synoma');
+  }
 
   try{
     // Se manda SOLO la pregunta nueva. Ni el código, ni el perfil, ni el
@@ -1859,7 +2016,7 @@ async function send(opciones = {}){
     const res = await api(null, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ mensaje: text, continua_pieza: pieza ? pieza.id : null }),
+      body: JSON.stringify({ mensaje: text, continua_pieza: pieza ? pieza.id : null, archivos: archivosPayload }),
     });
 
     if(!res.ok){
