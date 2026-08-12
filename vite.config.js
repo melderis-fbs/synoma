@@ -13,7 +13,16 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
-    server: { port: 5173 },
+    server: {
+      port: 5173,
+      proxy: {
+        '/functions': {
+          target: 'https://lzdzgquzucgznrmeldix.supabase.co',
+          changeOrigin: true,
+          secure: true,
+        },
+      },
+    },
     build: { outDir: 'dist' },
   };
 });
