@@ -563,6 +563,8 @@
 <script type="module">
 const SUPABASE_URL = 'https://lzdzgquzucgznrmeldix.supabase.co';
 const EDGE_URL = SUPABASE_URL + '/functions/v1/synoma-chat';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6ZHpncXV6dWNnem5ybWVsZGl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4Njk3NTgsImV4cCI6MjEwMTQ0NTc1OH0.9Pa6SL-an_9KnQ13QWDChLdLCHEWaBhtrlqjA6fcPV8';
+const STORAGE_BUCKET = 'chat-attachments';
 
 // Todas las operaciones de datos pasan por la edge function (server-side,
 // con service role key). El navegador nunca habla directo a la base.
@@ -760,6 +762,22 @@ async function readFileAsText(file){
   });
 }
 
+async function uploadToStorage(file){
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const uid = crypto.randomUUID();
+  const path = `chat/${uid}.${ext}`;
+  const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Content-Type': file.type || 'application/octet-stream',
+    },
+    body: file,
+  });
+  if(!res.ok) throw new Error('upload_failed');
+  return path;
+}
+
 async function prepareFiles(chat){
   const arr = chat === 'vicky' ? pendingFilesVicky : pendingFilesSynoma;
   if(!arr.length) return [];
@@ -771,12 +789,11 @@ async function prepareFiles(chat){
     const isCsv = ext === 'csv';
     const isExcel = ['xlsx','xls'].includes(ext);
     if(isImage || isPdf){
-      const dataUrl = await readFileAsDataUrl(f);
-      const base64 = dataUrl.split(',')[1];
+      const path = await uploadToStorage(f);
       out.push({
         type: isPdf ? 'pdf' : 'image',
         media_type: isPdf ? 'application/pdf' : f.type || 'image/png',
-        data: base64,
+        storage_path: path,
         name: f.name,
       });
     } else if(isCsv || isExcel){

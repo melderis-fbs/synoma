@@ -226,24 +226,48 @@ async function guardarTurno(clienteId: string, pregunta: string, respuesta: stri
   await sbUpdate("conversaciones", { actualizado_en: new Date().toISOString(), titulo: textoGuardar.slice(0, 80) }, `id=eq.${convId}`);
 }
 
-// Convierte los archivos que manda el navegador (base64 o texto) en bloques de
-// contenido para Claude. Imágenes y PDFs se mandan nativamente; CSV y Excel se
-// mandan como texto extraído porque Claude no los parsea binarios.
-function archivosABloques(archivos: any[]): any[] {
+// Convierte los archivos que manda el navegador en bloques de contenido para
+// Claude. Las imágenes y PDFs se suben primero a Supabase Storage (ver
+// prepareFiles en el frontend) y acá se descargan con la service role key;
+// CSV y Excel se mandan como texto extraído porque Claude no los parsea
+// binarios.
+async function archivosABloques(archivos: any[]): Promise<any[]> {
   if (!Array.isArray(archivos) || !archivos.length) return [];
   const bloques: any[] = [];
   for (const a of archivos) {
     if (!a || !a.type) continue;
-    if (a.type === "image" && a.data) {
-      bloques.push({
-        type: "image",
-        source: { type: "base64", media_type: a.media_type || "image/png", data: a.data },
+    if ((a.type === "image" || a.type === "pdf") && a.storage_path) {
+      const mediaType = a.type === "pdf" ? "application/pdf" : (a.media_type || "image/png");
+      const bucket = "chat-attachments";
+      const url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/${bucket}/${a.storage_path}`;
+      const res = await fetch(url, {
+        headers: {
+          apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
       });
-    } else if (a.type === "pdf" && a.data) {
-      bloques.push({
-        type: "document",
-        source: { type: "base64", media_type: "application/pdf", data: a.data },
-      });
+      if (!res.ok) continue;
+      const buf = await res.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      if (a.type === "pdf") {
+        bloques.push({
+          type: "document",
+          source: { type: "base64", media_type: "application/pdf", data: base64 },
+        });
+      } else {
+        bloques.push({
+          type: "image",
+          source: { type: "base64", media_type: mediaType, data: base64 },
+        });
+      }
+      // Limpiar el archivo del bucket después de descargarlo
+      fetch(`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/${bucket}/${a.storage_path}`, {
+        method: "DELETE",
+        headers: {
+          apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+          Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+        },
+      }).catch(() => {});
     } else if (a.type === "text" && a.content) {
       const etiqueta = a.name ? `=== ARCHIVO: ${a.name} ===\n` : "";
       bloques.push({ type: "text", text: `${etiqueta}${a.content}\n=== FIN DEL ARCHIVO ===` });
@@ -253,7 +277,7 @@ function archivosABloques(archivos: any[]): any[] {
 }
 
 function construirMensajeUsuario(pregunta: string, archivos: any[]): any {
-  const bloques = archivosABloques(archivos);
+  const bloques = await archivosABloques(archivos);
   if (!bloques.length) return pregunta;
   const texto = pregunta || "Te adjunto archivos para que los revises.";
   return [{ type: "text", text }, ...bloques];
