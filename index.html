@@ -936,6 +936,7 @@ function toggleMobileCmds(force){
   backdrop.classList.toggle('on', open);
   toggle.setAttribute('aria-expanded', String(open));
 }
+window.toggleMobileCmds = toggleMobileCmds;
 
 function entrarDash(){
   $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
