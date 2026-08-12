@@ -1075,6 +1075,25 @@ function toggleMobileCmds(force){
   toggle.setAttribute('aria-expanded', String(open));
 }
 window.toggleMobileCmds = toggleMobileCmds;
+window.pedirCodigo = pedirCodigo;
+window.confirmarCodigo = confirmarCodigo;
+window.volverAEmail = volverAEmail;
+window.guardarIdentidad = guardarIdentidad;
+window.abrirBiblioteca = abrirBiblioteca;
+window.abrirIdentidad = abrirIdentidad;
+window.borrarHistorial = borrarHistorial;
+window.salir = salir;
+window.runCmd = runCmd;
+window.askCmd = askCmd;
+window.mostrarEnConstruccion = mostrarEnConstruccion;
+window.abrirVicky = abrirVicky;
+window.send = send;
+window.onFilesPicked = onFilesPicked;
+window.sendVicky = sendVicky;
+window.volverDelVicky = volverDelVicky;
+window.borrarHistorialVicky = borrarHistorialVicky;
+window.volverAlChat = volverAlChat;
+window.cerrarCalendario = cerrarCalendario;
 
 function entrarDash(){
   $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
