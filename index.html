@@ -1888,6 +1888,11 @@ function tarjetaDePieza(p){
     pie.appendChild(cal);
   }
 
+  if(p.tipo === 'estrategia'){
+    const pdf = mini('📄 Descargar PDF', () => descargarEstrategiaPDF(p.titulo || 'Estrategia del mes', p.contenido || ''));
+    pie.appendChild(pdf);
+  }
+
   const ver = mini(card.classList.contains('abierta') ? 'Ocultar' : 'Ver', () => {
     card.classList.toggle('abierta');
     ver.textContent = card.classList.contains('abierta') ? 'Ocultar' : 'Ver';
@@ -1993,7 +1998,7 @@ async function borrarPiezaUI(p){
 // Aviso bajo la burbuja cuando el servidor confirmó que la pieza quedó guardada.
 // Solo se muestra si el guardado ocurrió de verdad: prometer "guardado" y que no
 // esté es peor que no avisar nada.
-function notaGuardada(pieza){
+function notaGuardada(pieza, texto){
   const n = document.createElement('div');
   n.className = 'guardada-nota';
   const t = document.createElement('span');
@@ -2006,6 +2011,13 @@ function notaGuardada(pieza){
     const c = document.createElement('button');
     c.textContent = '📅 Ver como calendario';
     c.onclick = () => abrirCalendario(pieza.id);
+    n.appendChild(c);
+  }
+
+  if(pieza?.tipo === 'estrategia' && pieza.id){
+    const c = document.createElement('button');
+    c.textContent = '📄 Descargar PDF';
+    c.onclick = () => descargarEstrategiaPDF(pieza.titulo || 'Estrategia del mes', texto || '');
     n.appendChild(c);
   }
 
@@ -2216,7 +2228,7 @@ async function guardarAMano(texto, boton){
       body: JSON.stringify({ contenido: texto }),
     });
     const data = await res.json();
-    if(data?.ok && data?.pieza) boton.replaceWith(notaGuardada(data.pieza));
+    if(data?.ok && data?.pieza) boton.replaceWith(notaGuardada(data.pieza, texto));
     else throw new Error('save_failed');
   }catch(e){
     boton.textContent = 'No se pudo';
