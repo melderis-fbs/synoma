@@ -29,6 +29,15 @@ function json(data: unknown, status = 200) {
   });
 }
 
+function base64FromBytes(bytes: Uint8Array): string {
+  let result = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    result += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(result);
+}
+
 // --- Supabase REST helper (service role — BYPASSRLS) ---
 // Uses SERVICE_ROLE_KEY so the server can read/write all tables regardless of RLS.
 // The browser never uses this key — it only sends its session token.
@@ -400,7 +409,7 @@ async function archivosABloques(archivos: any[]): Promise<any[]> {
       });
       if (!res.ok) continue;
       const buf = await res.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const base64 = base64FromBytes(new Uint8Array(buf));
       if (a.type === "pdf") {
         bloques.push({
           type: "document",
@@ -680,9 +689,12 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
   const bloques: any[] = [];
   for (const a of archivos) {
     if (a?.type === "image" && a?.data_url) {
-      const base64 = String(a.data_url).split(",").slice(1).join("");
-      const mediaType = a.media_type || "image/png";
-      bloques.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64 } });
+      const partes = String(a.data_url).split(",");
+      const base64 = partes.length > 1 ? partes.slice(1).join("") : "";
+      const mediaType = a.media_type === "image/jpeg" || a.media_type === "image/png" ? a.media_type : "image/jpeg";
+      if (base64 && base64.length <= 7_000_000) {
+        bloques.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64 } });
+      }
     }
   }
 
@@ -699,7 +711,7 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
       const ct = imgRes.headers.get("content-type") || "";
       if (!ct.startsWith("image/")) throw new Error("not_image");
       const buf = await imgRes.arrayBuffer();
-      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      const base64 = base64FromBytes(new Uint8Array(buf));
       bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
     } catch {
       return json({ error: "error_imagenes", message: "No pude descargar la imagen del link. Probá subiendo la imagen directamente." }, 400);
