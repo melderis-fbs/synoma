@@ -638,9 +638,8 @@
         <p style="font-size:12px;color:var(--muted);margin:0">JPG o PNG · hasta 9 imágenes · máximo 5 MB cada una</p>
         <input type="file" id="visual-file" accept="image/png,image/jpeg,image/jpg" multiple hidden>
       </div>
-      <div style="display:flex;align-items:center;gap:10px;margin:4px 0 10px;color:var(--muted);font-size:12px"><span style="height:1px;background:var(--border);flex:1"></span><span>o pegá un link público de Instagram</span><span style="height:1px;background:var(--border);flex:1"></span></div>
-      <input id="visual-instagram" type="url" placeholder="https://www.instagram.com/..." autocomplete="url" style="width:100%;box-sizing:border-box;margin-bottom:16px">
       <div id="visual-thumbs" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px"></div>
+      <p style="font-size:12px;color:var(--muted);line-height:1.5;margin:0 0 16px">💡 Para descargar una captura de tu feed: entrá a tu perfil de Instagram desde el celu, hacé una captura de pantalla donde se vean las últimas 9 publicaciones, y subila acá.</p>
       <div style="display:flex;gap:10px">
         <button class="btn" style="flex:1" id="visual-analizar" onclick="analizarVisual()">Analizar</button>
         <button class="btn" style="background:var(--cream);color:var(--black);border:1px solid var(--border)" onclick="visualVolver()">Volver</button>
@@ -1504,7 +1503,6 @@ function visualReset(){
   $('visual-cargando').hidden = true;
   $('visual-thumbs').replaceChildren();
   $('visual-file').value = '';
-  $('visual-instagram').value = '';
 }
 
 let visualTipo = 'diagnostico';
@@ -1526,7 +1524,6 @@ function visualVolver(){
   $('visual-paso-subir').hidden = true;
   visualFiles = [];
   $('visual-thumbs').replaceChildren();
-  $('visual-instagram').value = '';
 }
 
 function visualVolverAElegir(){
@@ -1565,9 +1562,8 @@ function renderVisualThumbs(){
 }
 
 async function analizarVisual(){
-  const instagramUrl = $('visual-instagram').value.trim();
-  if(!visualFiles.length && !instagramUrl){
-    alert('Subí al menos una imagen o pegá un link público de Instagram.');
+  if(!visualFiles.length){
+    alert('Subí al menos una imagen para analizar.');
     return;
   }
   $('visual-paso-subir').hidden = true;
@@ -1589,7 +1585,7 @@ async function analizarVisual(){
 
     const res = await api('analisis-visual', {
       method: 'POST',
-      body: JSON.stringify({ tipo: visualTipo, archivos, instagram_url: instagramUrl }),
+      body: JSON.stringify({ tipo: visualTipo, archivos }),
     });
 
     const data = await res.json();
