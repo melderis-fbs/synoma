@@ -276,7 +276,7 @@ async function archivosABloques(archivos: any[]): Promise<any[]> {
   return bloques;
 }
 
-function construirMensajeUsuario(pregunta: string, archivos: any[]): any {
+async function construirMensajeUsuario(pregunta: string, archivos: any[]): Promise<any> {
   const bloques = await archivosABloques(archivos);
   if (!bloques.length) return pregunta;
   const texto = pregunta || "Te adjunto archivos para que los revises.";
@@ -859,7 +859,7 @@ async function handleVickyChat(cliente: { id: string }, req: Request) {
     { type: "text", text: bloqueDeFecha() + contextoSynoma },
   ];
 
-  const contenidoUsuario = construirMensajeUsuario(pregunta, archivos);
+  const contenidoUsuario = await construirMensajeUsuario(pregunta, archivos);
   const trimmed = paraElModelo([...previosVicky, { role: "user", content: contenidoUsuario }]);
 
   let upstream;
@@ -986,7 +986,7 @@ async function handleChat(cliente: { id: string }, req: Request) {
   // Get history
   let previos: any[] = [];
   try { previos = await historialV2(cliente.id, MENSAJES_CONTEXTO); } catch {}
-  const contenidoUsuario = construirMensajeUsuario(pregunta, archivos);
+  const contenidoUsuario = await construirMensajeUsuario(pregunta, archivos);
   const trimmed = paraElModelo([...previos, { role: "user", content: contenidoUsuario }]);
 
   // Call Claude
