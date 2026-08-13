@@ -769,12 +769,17 @@ async function uploadToStorage(file){
   const res = await fetch(`${SUPABASE_URL}/storage/v1/object/${STORAGE_BUCKET}/${path}`, {
     method: 'POST',
     headers: {
+      'apikey': SUPABASE_ANON_KEY,
       'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       'Content-Type': file.type || 'application/octet-stream',
     },
     body: file,
   });
-  if(!res.ok) throw new Error('upload_failed');
+  if(!res.ok){
+    const detail = await res.text().catch(()=>'');
+    console.error('upload_failed', res.status, detail);
+    throw new Error('upload_failed');
+  }
   return path;
 }
 
