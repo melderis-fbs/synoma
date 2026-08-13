@@ -158,10 +158,10 @@ function bloqueDeFecha(ahora = new Date()) {
 }
 
 // --- Biblioteca helpers ---
-const COMANDOS_PIEZA = ["semana","idea","reel","historias","venta","post","repurpose","revisar","cicloventa","objecion"];
+const COMANDOS_PIEZA = ["semana","idea","reel","historias","venta","post","repurpose","revisar","cicloventa","objecion","quepublico"];
 const TIPO_PIEZA: Record<string, string> = {
   semana:"plan", idea:"idea", reel:"reel", historia:"historia",
-  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", cicloventa:"cicloventa", objecion:"otro",
+  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", cicloventa:"cicloventa", objecion:"otro", quepublico:"plan",
 };
 
 function detectarPieza(pregunta: string) {
@@ -477,7 +477,169 @@ Deno.serve(async (req: Request) => {
     if (req.method === "DELETE") return handleDeleteHistorialVicky(cliente);
   }
 
-  // --- CHAT (default) ---
+  // --- ANÁLISIS VISUAL ---
+  if (accion === "analisis-visual") {
+    if (req.method === "GET") return handleGetAnalisisVisual(cliente);
+    if (req.method === "POST") return handleAnalisisVisual(cliente, req);
+  }
+
+  // GET /analisis-visual — listar historial de diagnósticos
+async function handleGetAnalisisVisual(cliente: { id: string }) {
+  const rows = await sbSelect("analisis_visual", "id,tipo,resultado,imagenes,creado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc&limit=20`);
+  return json(rows || []);
+}
+
+// POST /analisis-visual — analizar imágenes con visión
+async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const tipo = payload?.tipo === "chequeo" ? "chequeo" : "diagnostico";
+  const archivos = Array.isArray(payload?.archivos) ? payload.archivos : [];
+  if (!archivos.length) return json({ error: "sin_imagenes", message: "Subí al menos una imagen." }, 400);
+  if (archivos.length > 9) return json({ error: "muchas_imagenes", message: "Máximo 9 imágenes por análisis." }, 400);
+
+  // --- Límites de uso ---
+  const ahora = new Date();
+  const inicioMes = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString();
+  const inicioSemana = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const historial = await sbSelect("analisis_visual", "tipo,creado_en", `cliente_id=eq.${cliente.id}&creado_en=gt.${inicioMes}`);
+  const diagnosticosMes = (historial || []).filter((h: any) => h.tipo === "diagnostico").length;
+  const chequeosSemana = (historial || []).filter((h: any) => h.tipo === "chequeo" && new Date(h.creado_en) >= new Date(inicioSemana)).length;
+
+  if (tipo === "diagnostico" && diagnosticosMes >= 2) {
+    const proximoMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 1).toLocaleDateString("es-AR", { day: "numeric", month: "long" });
+    return json({ error: "limite_alcanzado", message: `Ya usaste tus 2 diagnósticos completos de este mes. Se renuevan el ${proximoMes}.` }, 429);
+  }
+  if (tipo === "chequeo" && chequeosSemana >= 5) {
+    return json({ error: "limite_alcanzado", message: "Ya usaste tus 5 chequeos de esta semana. Se renuevan en 7 días." }, 429);
+  }
+
+  // --- Obtener perfil del cliente para contexto ---
+  const perfiles = await sbSelect("perfiles", "manual,oferta,encuesta,fundacion", `cliente_id=eq.${cliente.id}&limit=1`);
+  const p = perfiles?.[0] || {};
+
+  // --- Construir prompt según tipo ---
+  const promptSistema = construirPromptAnalisisVisual(tipo, p);
+
+  // --- Descargar y preparar imágenes ---
+  const bloques = await archivosABloques(archivos);
+  if (!bloques.length) return json({ error: "error_imagenes", message: "No pude leer las imágenes. Probá subirlas de nuevo." }, 400);
+
+  const mensajeUsuario = tipo === "diagnostico"
+    ? "Acá está mi feed. Quiero el diagnóstico completo."
+    : "Acá está la placa que voy a publicar. Quiero el chequeo rápido.";
+
+  const messages = [{ role: "user", content: [{ type: "text", text: mensajeUsuario }, ...bloques] }];
+
+  // --- Llamar a Claude (sin streaming, devolvemos el texto completo) ---
+  let apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) return json({ error: "no_api_key", message: "Servicio no configurado." }, 500);
+
+  let respuesta = "";
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: MAX_TOKENS,
+        stream: false,
+        system: [{ type: "text", text: promptSistema }],
+        messages,
+      }),
+    });
+    if (!res.ok) {
+ const detail = await res.text().catch(() => "");
+      return json({ error: "api_error", message: `Error del servicio de IA (${res.status}).` }, 502);
+    }
+    const data = await res.json();
+    respuesta = (data?.content || []).map((b: any) => b?.text || "").join("");
+  } catch {
+    return json({ error: "api_error", message: "No pude conectar con el servicio de IA." }, 502);
+  }
+
+  if (!respuesta.trim()) return json({ error: "vacio", message: "El análisis no generó resultado. Probá de nuevo." }, 502);
+
+  // --- Guardar en historial ---
+  await sbInsert("analisis_visual", {
+    cliente_id: cliente.id,
+    tipo,
+    resultado: respuesta,
+    imagenes: archivos.length,
+  });
+
+  return json({ ok: true, resultado: respuesta });
+}
+
+function construirPromptAnalisisVisual(tipo: string, perfil: any): string {
+  const oferta = perfil.oferta?.trim() || "(no cargada)";
+  const manual = perfil.manual?.trim() || "(no cargado)";
+  const encuesta = perfil.encuesta?.trim() || "(no cargadas)";
+
+  const base = `Sos Synoma, una socia que ayuda a profesionales a crear contenido para redes sociales.
+Estás haciendo un ANÁLISIS VISUAL del contenido de Instagram de una clienta.
+
+DATOS DE LA CLIENTA:
+- Oferta: ${oferta}
+- Manual de marca: ${manual}
+- Encuesta de identidad: ${encuesta}
+
+REGLAS OBLIGATORIAS:
+1. NUNCA muestres números, notas, porcentajes, estrellas ni barras de calidad. Ni "7/10", ni "nivel intermedio". Prohibido.
+2. Un solo cambio prioritario por vez. Aunque veas diez problemas, informá uno: el que más mueva la percepción de precio.
+3. Siempre nombrá algo que ya funciona, y que sea real. Nada de elogios genéricos inventados.
+4. Sin jerga de diseño. Prohibido: jerarquía tipográfica, kerning, paleta cromática, composición, grilla, contraste tonal. Traducir a lenguaje común.
+5. Nunca compares con otras personas. Ni otras clientas, ni referentes, ni influencers.
+6. El cambio tiene que ser ejecutable sin diseñador. Unificar tipografía, agrandar texto, sacar palabras. No sugerir rediseños de marca.
+7. Si la imagen no se entiende, pedí otra sin culpar a la clienta. Decí "no llego a ver bien las placas, ¿me pasás una captura más grande?" y nunca "subiste mal la imagen".
+8. El tono es de socia: directa y honesta, pero nunca dura. Todo en términos de negocio (cuánto puede cobrar, a quién atrae), nunca de gusto personal.
+
+LAS 5 COSAS QUE ANALIZÁS (uso interno, la clienta nunca ve esta lista):
+1. Precio percibido — ¿parece de alguien que cobra USD 300 o USD 3.000? Comparar contra el precio real de su oferta. Es el más importante: priorizalo siempre.
+2. Coherencia — ¿todas las piezas parecen de la misma persona? Tipografías, colores, estilo.
+3. Legibilidad en celular — ¿se lee en pantalla chica? Tamaño de texto, contraste, cantidad de texto por placa.
+4. Foco — ¿cada pieza comunica una sola idea o está saturada?
+5. Reconocimiento — si se tapara el nombre, ¿se sabría que es esta persona?`;
+
+  if (tipo === "chequeo") {
+    return base + `
+
+MOMENTO: Chequeo de una pieza antes de publicar.
+Devolvé una versión CORTA: un comentario sobre legibilidad y foco, y si desentona con el resto de su feed. Máximo 4 líneas.
+No uses la estructura de 5 partes. Es un chequeo rápido, no un diagnóstico completo.`;
+  }
+
+  return base + `
+
+MOMENTO: Diagnóstico completo del feed.
+Devolvé la respuesta SIEMPRE con estas cinco partes, en este orden exacto:
+
+TU VISUAL HOY DICE:
+[una frase corta describiendo qué comunica su imagen actual]
+
+TU CLIENTE IDEAL NECESITA VER:
+[una frase corta describiendo qué debería comunicar, según a quién le vende y a qué precio]
+
+DÓNDE ESTÁ LA DISTANCIA:
+[dos o tres oraciones explicando qué está causando la diferencia, señalando elementos visuales concretos]
+
+LO QUE YA FUNCIONA:
+[algo real que está haciendo bien y no debería cambiar]
+
+CAMBIÁ ESTO PRIMERO:
+[UN SOLO cambio concreto, con el tiempo que le va a llevar]
+
+Si ya existe un diagnóstico anterior en el historial, arrancá comparando en palabras (nunca con números):
+"Hace un mes tu visual decía X. Hoy dice Y. Avanzaste." o mostrar de nuevo el cambio pendiente si no hubo mejora.`;
+}
+
+// --- CHAT (default) ---
   if (req.method === "POST") return handleChat(cliente, req);
 
   return json({ error: "not_found" }, 404);
@@ -980,6 +1142,40 @@ async function handleChat(cliente: { id: string }, req: Request) {
         const resumen = piezas.map((p: any) => `- ${p.titulo} (${p.tipo}, ${p.estado})`).join("\n");
         system.push({ type: "text", text: `=== BIBLIOTECA DEL CLIENTE ===\n${resumen}\n=== FIN ===` });
       }
+    } catch {}
+  }
+
+  // /quepublico: inject client state so Claude knows which case applies
+  if (/^\/quepublico\b/i.test(pregunta)) {
+    try {
+      const piezas = await sbSelect("piezas", "tipo,titulo,estado,creado_en,publicado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc&limit=100`);
+      const hoy = new Date();
+      const hoyStr = hoy.toDateString();
+      const lunes = new Date(hoy);
+      const dia = hoy.getDay();
+      lunes.setDate(hoy.getDate() - (dia === 0 ? 6 : dia - 1));
+      lunes.setHours(0, 0, 0, 0);
+
+      const cicloActivo = piezas.find((p: any) => p.tipo === "cicloventa" && p.estado !== "archivada");
+      const planSemana = piezas.find((p: any) => p.tipo === "plan" && new Date(p.creado_en) >= lunes);
+      const publicadasHoy = piezas.filter((p: any) => p.estado === "publicada" && p.publicado_en && new Date(p.publicado_en).toDateString() === hoyStr);
+      const piezasSemanaPublicadas = piezas.filter((p: any) =>
+        p.estado === "publicada" && p.tipo !== "historia" && p.publicado_en && new Date(p.publicado_en) >= lunes
+      ).length;
+      const historiasHoy = piezas.some((p: any) =>
+        p.estado === "publicada" && p.tipo === "historia" && p.publicado_en && new Date(p.publicado_en).toDateString() === hoyStr
+      );
+
+      const estado: string[] = [];
+      if (cicloActivo) estado.push(`- Hay un CICLO DE PROMOCIÓN DE VENTAS ACTIVO (creado el ${new Date(cicloActivo.creado_en).toLocaleDateString("es-AR")}). El ciclo manda sobre cualquier otro plan.`);
+      if (planSemana) estado.push(`- Ya tiene un PLAN SEMANAL creado esta semana (creado el ${new Date(planSemana.creado_en).toLocaleDateString("es-AR")}).`);
+      else estado.push(`- NO tiene un plan semanal creado esta semana.`);
+      estado.push(`- Piezas publicadas esta semana (excluyendo historias): ${piezasSemanaPublicadas}.`);
+      estado.push(`- Historias publicadas hoy: ${historiasHoy ? "sí" : "no"}.`);
+      estado.push(`- Piezas publicadas hoy: ${publicadasHoy.length}.`);
+      if (publicadasHoy.length > 0) estado.push(`- Lo que ya publicó hoy: ${publicadasHoy.map((p: any) => p.titulo).join(", ")}.`);
+
+      system.push({ type: "text", text: `=== ESTADO DEL CLIENTE PARA "QUÉ PUBLICO HOY" ===\n${estado.join("\n")}\n=== FIN ===\n\nUsá esta información para determinar qué caso aplica de los 4 del comando /quepublico (ver instrucciones en el system prompt).` });
     } catch {}
   }
 
