@@ -172,11 +172,106 @@ function detectarPieza(pregunta: string) {
 
 function extraerTitulo(texto: string, tipo: string) {
   const limpia = texto.replace(/\*\*/g, "").trim();
-  const primeraLinea = limpia.split("\n").find((l) => l.trim()) || "";
-  let titulo = primeraLinea.replace(/^\|.*$/, "").replace(/^#+\s*/, "").trim();
-  if (titulo.length > 80) titulo = titulo.slice(0, 77) + "…";
-  if (!titulo) titulo = tipo.charAt(0).toUpperCase() + tipo.slice(1);
-  return titulo;
+  const lineas = limpia.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+
+  // Patrones de título según tipo de pieza
+  const patrones: Record<string, RegExp[]> = {
+    estrategia: [
+      /^mensaje central del ciclo\s*:?\s*["""](.+?)["""]/i,
+      /^mensaje central\s*:?\s*["""](.+?)["""]/i,
+      /^acto\s*[12]\s*[:·-]\s*(.+)/i,
+    ],
+    plan: [
+      /^acto\s*[12]\s*[:·-]\s*(.+)/i,
+      /^d[ií]a\s*1\s*[:·-]?\s*(.+)/i,
+    ],
+    reel: [
+      /^con qu[eé] frase arranca\s*:?\s*(.+)/i,
+      /^gancho\s*:?\s*(.+)/i,
+      /^d[ií]a\s*\d+\s*[:·-]?\s*(.+)/i,
+    ],
+    post: [
+      /^con qu[eé] frase arranca\s*:?\s*(.+)/i,
+      /^gancho\s*:?\s*(.+)/i,
+    ],
+    venta: [
+      /^oferta\s*:?\s*(.+)/i,
+      /^propuesta\s*:?\s*(.+)/i,
+    ],
+    cicloventa: [
+      /^ciclo de (?:promoci[oó]n de )?ventas?\s*[:·-]\s*(.+)/i,
+      /^semana\s*1\s*[:·-]?\s*(.+)/i,
+    ],
+  };
+
+  // Buscar título por patrones del tipo
+  if (patrones[tipo]) {
+    for (const p of patrones[tipo]) {
+      for (const l of lineas) {
+        const m = l.match(p);
+        if (m && m[1]) {
+          let t = m[1].trim().replace(/^["""]|["""]$/g, "");
+          if (t.length > 80) t = t.slice(0, 77) + "…";
+          return t;
+        }
+      }
+    }
+  }
+
+  // Fallback: buscar la primera línea que NO sea conversacional
+  const conversacional = /^(mir[aá]|ac[aá]|listo|antes de|te arm|ac[aá] te|bueno|che|mir[aeá],|perfecto|dale|ok\b|ya est[aá])/i;
+  const etiquetas = /^(t[ií]tulo|d[ií]a|acto|semana|slide|gancho|desarrollo|cierre|cta|objetivo|formato|idea central|qué buscamos|con qu[eé] frase|qu[eé] le pedimos|ejemplo|historia|creencia|percepci[oó]n|mensaje central|3 ideas|qu[eé] no)/i;
+
+  for (const l of lineas) {
+    if (conversacional.test(l)) continue;
+    if (etiquetas.test(l)) continue;
+    if (l.startsWith("|")) continue; // tabla
+    if (l.startsWith("---")) continue;
+    if (l.startsWith("(") && l.endsWith(")")) continue; // numeración de slide
+    if (l.length < 10) continue;
+    let t = l.replace(/^#+\s*/, "").trim();
+    if (t.length > 80) t = t.slice(0, 77) + "…";
+    return t;
+  }
+
+  // Último recurso: el nombre del tipo
+  const nombres: Record<string, string> = {
+    plan: "Plan semanal", idea: "Ideas", reel: "Reel", historia: "Historias",
+    venta: "Pieza de venta", post: "Post", reciclado: "Contenido reciclado",
+    revision: "Revisión", cicloventa: "Ciclo de Venta", estrategia: "Estrategia del mes",
+  };
+  return nombres[tipo] || tipo.charAt(0).toUpperCase() + tipo.slice(1);
+}
+
+// Limpia el wrapper conversacional de Synoma: saca las líneas de charla
+// al principio y al final, dejando solo la pieza de contenido.
+function limpiarContenido(texto: string): string {
+  const limpia = texto.replace(/\*\*/g, "").trim();
+  const lineas = limpia.split("\n").map((l) => l.trim());
+
+  // Marcadores que indican que arranca el contenido real
+  const inicioContenido = /^(d[ií]a\s*\d|acto\s*[12]|mensaje central|percepci[oó]n inicial|antes de armar|slide\s*\(|\(|\||objetivo del mes|plan semana|qué promocionar|acción para|tu visual hoy dice|tu cliente ideal necesita|d[oó]nde est[aá] la distancia|lo que ya funciona|cambi[aá] esto primero)/i;
+
+  // Marcadores que indican charla de Synoma (no contenido)
+  const esCharla = /^(mir[aá]|ac[aá] te|listo|antes de arm|te arm|bueno|che|mir[aeá],|perfecto|dale|ok\b|ya est[aá]|ac[aá] ten|tom[aá]|empez[aá]mos|arrancamos|lo que arme|esta es|este es|lo que te|como siempre|no te olvides|record[aá]|marc[aá]lo|baj[aá]telo|guardalo|pod[eé]s editar|si quer[eé]s|si te gusta|si no te|cuando lo|despu[eé]s de|una cosa m[aá]s|por [uú]ltimo|avisanos|avisame|contame c[oó]mo|decime qu[eé]|mandame|escribime|pasame)/i;
+
+  // Encontrar el primer índice de contenido real
+  let inicio = 0;
+  for (let i = 0; i < lineas.length; i++) {
+    if (inicioContenido.test(lineas[i])) { inicio = i; break; }
+    if (!esCharla.test(lineas[i]) && lineas[i].length > 30 && !lineas[i].endsWith("?")) { inicio = i; break; }
+  }
+
+  // Encontrar el último índice de contenido (antes de la charla final)
+  let fin = lineas.length;
+  for (let i = lineas.length - 1; i >= inicio; i--) {
+    if (lineas[i].length === 0) continue;
+    if (esCharla.test(lineas[i]) && i > inicio + 3) { fin = i; continue; }
+    break;
+  }
+
+  const limpio = lineas.slice(inicio, fin).join("\n").trim();
+  return limpio.length > 100 ? limpio : limpia;
 }
 
 function esClarificacion(respuesta: string): boolean {
@@ -193,8 +288,9 @@ async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: 
   if (!det) return null;
   if (esClarificacion(respuesta)) return null;
   const titulo = extraerTitulo(respuesta, det.tipo);
+  const contenido = limpiarContenido(respuesta);
   const rows = await sbInsert("piezas", {
-    cliente_id: clienteId, tipo: det.tipo, titulo, contenido: respuesta, comando: det.comando, estado: "nueva",
+    cliente_id: clienteId, tipo: det.tipo, titulo, contenido, comando: det.comando, estado: "nueva",
   });
   return Array.isArray(rows) ? rows[0] : null;
 }
@@ -974,10 +1070,12 @@ async function handleSavePiezaManual(cliente: { id: string }, req: Request) {
   let payload;
   try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
-  const contenido = String(payload?.contenido || "").trim();
+  const contenidoCrudo = String(payload?.contenido || "").trim();
   const tipo = String(payload?.tipo || "otro").trim();
-  const titulo = String(payload?.titulo || contenido.slice(0, 80)).trim();
-  if (!contenido) return json({ error: "bad_data", message: "Falta el contenido." }, 400);
+  if (!contenidoCrudo) return json({ error: "bad_data", message: "Falta el contenido." }, 400);
+
+  const contenido = limpiarContenido(contenidoCrudo);
+  const titulo = String(payload?.titulo || "").trim() || extraerTitulo(contenidoCrudo, tipo);
 
   const rows = await sbInsert("piezas", {
     cliente_id: cliente.id, tipo, titulo, contenido, comando: "manual", estado: "nueva",
