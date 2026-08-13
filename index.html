@@ -635,9 +635,11 @@
     <div id="visual-paso-subir" hidden>
       <div id="visual-drop" style="border:2px dashed var(--border);border-radius:14px;padding:32px 20px;text-align:center;cursor:pointer;margin:20px 0 16px;transition:border-color .15s">
         <p style="font-size:14px;font-weight:600;color:var(--ink);margin:0 0 6px">Tocá acá o arrastrá las imágenes</p>
-        <p style="font-size:12px;color:var(--muted);margin:0">JPG o PNG · hasta 9 imágenes</p>
+        <p style="font-size:12px;color:var(--muted);margin:0">JPG o PNG · hasta 9 imágenes · máximo 5 MB cada una</p>
         <input type="file" id="visual-file" accept="image/png,image/jpeg,image/jpg" multiple hidden>
       </div>
+      <div style="display:flex;align-items:center;gap:10px;margin:4px 0 10px;color:var(--muted);font-size:12px"><span style="height:1px;background:var(--border);flex:1"></span><span>o pegá un link público de Instagram</span><span style="height:1px;background:var(--border);flex:1"></span></div>
+      <input id="visual-instagram" type="url" placeholder="https://www.instagram.com/..." autocomplete="url" style="width:100%;box-sizing:border-box;margin-bottom:16px">
       <div id="visual-thumbs" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px"></div>
       <div style="display:flex;gap:10px">
         <button class="btn" style="flex:1" id="visual-analizar" onclick="analizarVisual()">Analizar</button>
@@ -1476,6 +1478,7 @@ function visualReset(){
   $('visual-cargando').hidden = true;
   $('visual-thumbs').replaceChildren();
   $('visual-file').value = '';
+  $('visual-instagram').value = '';
 }
 
 let visualTipo = 'diagnostico';
@@ -1497,6 +1500,7 @@ function visualVolver(){
   $('visual-paso-subir').hidden = true;
   visualFiles = [];
   $('visual-thumbs').replaceChildren();
+  $('visual-instagram').value = '';
 }
 
 function visualVolverAElegir(){
@@ -1506,6 +1510,10 @@ function visualVolverAElegir(){
 function visualAddFiles(files){
   for(const f of files){
     if(!f.type.startsWith('image/')) continue;
+    if(f.size > MAX_FILE_BYTES){
+      alert(`"${f.name}" pesa más de 5 MB. Probá con una imagen más chica.`);
+      continue;
+    }
     if(visualFiles.length >= 9) break;
     visualFiles.push(f);
   }
@@ -1531,8 +1539,9 @@ function renderVisualThumbs(){
 }
 
 async function analizarVisual(){
-  if(!visualFiles.length){
-    alert('Subí al menos una imagen.');
+  const instagramUrl = $('visual-instagram').value.trim();
+  if(!visualFiles.length && !instagramUrl){
+    alert('Subí al menos una imagen o pegá un link público de Instagram.');
     return;
   }
   $('visual-paso-subir').hidden = true;
@@ -1541,19 +1550,17 @@ async function analizarVisual(){
   try{
     const archivos = [];
     for(const f of visualFiles){
-      const path = await uploadToStorage(f);
-      const ext = (f.name.split('.').pop() || '').toLowerCase();
       archivos.push({
         type: 'image',
         media_type: f.type || 'image/png',
-        storage_path: path,
+        data_url: await readFileAsDataUrl(f),
         name: f.name,
       });
     }
 
     const res = await api('analisis-visual', {
       method: 'POST',
-      body: JSON.stringify({ tipo: visualTipo, archivos }),
+      body: JSON.stringify({ tipo: visualTipo, archivos, instagram_url: instagramUrl }),
     });
 
     const data = await res.json();

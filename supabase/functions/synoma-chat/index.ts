@@ -648,7 +648,8 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
 
   const tipo = payload?.tipo === "chequeo" ? "chequeo" : "diagnostico";
   const archivos = Array.isArray(payload?.archivos) ? payload.archivos : [];
-  if (!archivos.length) return json({ error: "sin_imagenes", message: "Subí al menos una imagen." }, 400);
+  const instagramUrl = String(payload?.instagram_url || "").trim();
+  if (!archivos.length && !instagramUrl) return json({ error: "sin_imagenes", message: "Subí al menos una imagen o pegá un link de Instagram." }, 400);
   if (archivos.length > 9) return json({ error: "muchas_imagenes", message: "Máximo 9 imágenes por análisis." }, 400);
 
   // --- Límites de uso ---
@@ -675,8 +676,36 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
   // --- Construir prompt según tipo ---
   const promptSistema = construirPromptAnalisisVisual(tipo, p);
 
-  // --- Descargar y preparar imágenes ---
-  const bloques = await archivosABloques(archivos);
+  // --- Preparar imágenes: base64 directo (sin pasar por Storage) ---
+  const bloques: any[] = [];
+  for (const a of archivos) {
+    if (a?.type === "image" && a?.data_url) {
+      const base64 = String(a.data_url).split(",").slice(1).join("");
+      const mediaType = a.media_type || "image/png";
+      bloques.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64 } });
+    }
+  }
+
+  // --- Si mandó un link de Instagram, descargar la imagen del lado del servidor ---
+  if (instagramUrl) {
+    try {
+      const u = new URL(instagramUrl);
+      const host = u.hostname.toLowerCase();
+      if (!host.endsWith("instagram.com") && !host.endsWith("instagr.am")) {
+        return json({ error: "url_invalida", message: "El link tiene que ser de Instagram." }, 400);
+      }
+      const imgRes = await fetch(u.href, { redirect: "follow" });
+      if (!imgRes.ok) throw new Error("fetch_failed");
+      const ct = imgRes.headers.get("content-type") || "";
+      if (!ct.startsWith("image/")) throw new Error("not_image");
+      const buf = await imgRes.arrayBuffer();
+      const base64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+      bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+    } catch {
+      return json({ error: "error_imagenes", message: "No pude descargar la imagen del link. Probá subiendo la imagen directamente." }, 400);
+    }
+  }
+
   if (!bloques.length) return json({ error: "error_imagenes", message: "No pude leer las imágenes. Probá subirlas de nuevo." }, 400);
 
   const mensajeUsuario = tipo === "diagnostico"
@@ -723,7 +752,7 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
     cliente_id: cliente.id,
     tipo,
     resultado: respuesta,
-    imagenes: archivos.length,
+    imagenes: archivos.length + (instagramUrl ? 1 : 0),
   });
 
   return json({ ok: true, resultado: respuesta });
