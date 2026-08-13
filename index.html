@@ -2213,7 +2213,7 @@ async function guardarAMano(texto, boton){
     // que el servidor reconoce para guardarlo como pieza sin llamar a Claude.
     const res = await api('biblioteca', {
       method: 'POST',
-      body: JSON.stringify({ contenido: texto, tipo: 'otro', titulo: texto.slice(0, 80) }),
+      body: JSON.stringify({ contenido: texto }),
     });
     const data = await res.json();
     if(data?.ok && data?.pieza) boton.replaceWith(notaGuardada(data.pieza));

@@ -250,7 +250,7 @@ function limpiarContenido(texto: string): string {
   const lineas = limpia.split("\n").map((l) => l.trim());
 
   // Marcadores que indican que arranca el contenido real
-  const inicioContenido = /^(d[ií]a\s*\d|acto\s*[12]|mensaje central|percepci[oó]n inicial|antes de armar|slide\s*\(|\(|\||objetivo del mes|plan semana|qué promocionar|acción para|tu visual hoy dice|tu cliente ideal necesita|d[oó]nde est[aá] la distancia|lo que ya funciona|cambi[aá] esto primero)/i;
+  const inicioContenido = /^(d[ií]a\s*\d|acto\s*[12]|mensaje central|percepci[oó]n inicial|antes de armar|slide\s*\d|\||objetivo del mes|plan semana|qué promocionar|acción para|tu visual hoy dice|tu cliente ideal necesita|d[oó]nde est[aá] la distancia|lo que ya funciona|cambi[aá] esto primero|qué buscamos|idea central|con qu[eé] frase|gancho|desarrollo|cierre|formato|qué le pedimos|ejemplo|historia|creencia|qué no|3 ideas)/i;
 
   // Marcadores que indican charla de Synoma (no contenido)
   const esCharla = /^(mir[aá]|ac[aá] te|listo|antes de arm|te arm|bueno|che|mir[aeá],|perfecto|dale|ok\b|ya est[aá]|ac[aá] ten|tom[aá]|empez[aá]mos|arrancamos|lo que arme|esta es|este es|lo que te|como siempre|no te olvides|record[aá]|marc[aá]lo|baj[aá]telo|guardalo|pod[eé]s editar|si quer[eé]s|si te gusta|si no te|cuando lo|despu[eé]s de|una cosa m[aá]s|por [uú]ltimo|avisanos|avisame|contame c[oó]mo|decime qu[eé]|mandame|escribime|pasame)/i;
@@ -271,7 +271,7 @@ function limpiarContenido(texto: string): string {
   }
 
   const limpio = lineas.slice(inicio, fin).join("\n").trim();
-  return limpio.length > 100 ? limpio : limpia;
+  return limpio.length > 20 ? limpio : limpia;
 }
 
 function esClarificacion(respuesta: string): boolean {
@@ -1066,13 +1066,32 @@ async function handleDeletePieza(cliente: { id: string }, req: Request) {
   return json({ ok: true });
 }
 
+// Detecta el tipo de pieza desde el contenido cuando no se especificó.
+// Busca marcadores estructurales típicos de cada tipo de contenido.
+function detectarTipoContenido(texto: string): string {
+  const t = texto.toLowerCase();
+  if (/mensaje central del ciclo|percepci[oó]n inicial|percepci[oó]n final|3 ideas que debemos repetir|acto\s*[12]/i.test(texto)) return "estrategia";
+  if (/semana\s*1|semana\s*2|objetivo del mes|qué promocionar|ciclo de (?:promoci[oó]n de )?ventas?/i.test(texto)) return "cicloventa";
+  if (/d[ií]a\s*(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bado|domingo|\d)/i.test(texto) && /\|/m.test(texto)) return "plan";
+  if (/slide\s*\(|\(\d\)|guion\s*de\s*reel/i.test(texto)) return "reel";
+  if (/historias?\s*de\s*hoy|story|sticker/i.test(t)) return "historia";
+  if (/oferta|propuesta|precio|descuento|bono|garant/i.test(t)) return "venta";
+  if (/idea central|con qu[eé] frase arranca|gancho/i.test(texto)) return "post";
+  return "otro";
+}
+
 async function handleSavePiezaManual(cliente: { id: string }, req: Request) {
   let payload;
   try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
 
   const contenidoCrudo = String(payload?.contenido || "").trim();
-  const tipo = String(payload?.tipo || "otro").trim();
   if (!contenidoCrudo) return json({ error: "bad_data", message: "Falta el contenido." }, 400);
+
+  // Detectar tipo desde el contenido si no se especificó
+  let tipo = String(payload?.tipo || "").trim();
+  if (!tipo || tipo === "otro") {
+    tipo = detectarTipoContenido(contenidoCrudo);
+  }
 
   const contenido = limpiarContenido(contenidoCrudo);
   const titulo = String(payload?.titulo || "").trim() || extraerTitulo(contenidoCrudo, tipo);
