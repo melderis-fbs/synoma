@@ -158,10 +158,10 @@ function bloqueDeFecha(ahora = new Date()) {
 }
 
 // --- Biblioteca helpers ---
-const COMANDOS_PIEZA = ["semana","idea","reel","historias","venta","post","repurpose","revisar","cicloventa","objecion","quepublico"];
+const COMANDOS_PIEZA = ["semana","idea","reel","historias","venta","post","repurpose","revisar","cicloventa","objecion","quepublico","estrategia"];
 const TIPO_PIEZA: Record<string, string> = {
   semana:"plan", idea:"idea", reel:"reel", historia:"historia",
-  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", cicloventa:"cicloventa", objecion:"otro", quepublico:"plan",
+  venta:"venta", post:"post", repurpose:"reciclado", revisar:"revision", cicloventa:"cicloventa", objecion:"otro", quepublico:"plan", estrategia:"estrategia",
 };
 
 function detectarPieza(pregunta: string) {

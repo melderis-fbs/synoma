@@ -479,11 +479,11 @@
         </span>
       </button>
       <div class="section-label"><b>MI PLAN</b></div>
-      <button class="cmd" onclick="runCmd('/pilares')">
+      <button class="cmd" onclick="runCmd('/estrategia')">
         <span class="em">🎯</span>
         <span class="cmd-wrap">
           <span class="cmd-tit">Mi estrategia del mes</span>
-          <span class="cmd-desc">pilares · qué promociono · objetivo</span>
+          <span class="cmd-desc">qué promocionar · qué semanas son de valor y cuáles de venta</span>
         </span>
       </button>
       <div class="section-label"><b>CREAR</b></div>
@@ -1304,7 +1304,7 @@ async function abrirBiblioteca(){
     ETIQUETAS = {
       plan: 'Plan semanal', idea: 'Ideas', reel: 'Reel',
       historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
-      reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', otro: 'Contenido',
+      reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', estrategia: 'Estrategia del mes', otro: 'Contenido',
     };
     pintarFiltros();
     pintarGrilla();
@@ -2248,13 +2248,13 @@ function errorNote(message){
 
 const EMOJI_TIPO = {
   plan: '📅', idea: '💡', reel: '🎬', historia: '📱',
-  venta: '🔥', post: '📝', reciclado: '♻️', revision: '🔍', cicloventa: '📆', otro: '📄',
+  venta: '🔥', post: '📝', reciclado: '♻️', revision: '🔍', cicloventa: '📆', estrategia: '🎯', otro: '📄',
 };
 
 const NOMBRE_TIPO = {
   plan: 'Plan semanal', idea: 'Ideas', reel: 'Reel',
   historia: 'Historias', venta: 'Pieza de venta', post: 'Post',
-  reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', otro: 'Contenido',
+  reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', estrategia: 'Estrategia del mes', otro: 'Contenido',
 };
 
 function mostrarTarjeta(body, pieza, texto, truncada){
