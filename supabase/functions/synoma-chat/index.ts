@@ -726,13 +726,49 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
       if (!host.endsWith("instagram.com") && !host.endsWith("instagr.am")) {
         return json({ error: "url_invalida", message: "El link tiene que ser de Instagram." }, 400);
       }
-      const imgRes = await fetch(u.href, { redirect: "follow" });
-      if (!imgRes.ok) throw new Error("fetch_failed");
-      const ct = imgRes.headers.get("content-type") || "";
+
+      // Instagram bloquea descargas directas: devuelve un login wall HTML.
+      // Estrategia: fetch la página HTML con un User-Agent de navegador,
+      // extraer la URL del meta og:image, y descargar esa imagen (CDN de Instagram).
+      const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      const pageRes = await fetch(u.href, {
+        redirect: "follow",
+        headers: {
+          "user-agent": UA,
+          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "accept-language": "es-AR,es;q=0.9,en;q=0.8",
+          "sec-fetch-dest": "document",
+          "sec-fetch-mode": "navigate",
+          "sec-fetch-site": "none",
+        },
+      });
+      const pageCt = pageRes.headers.get("content-type") || "";
+
+      let imgUrl: string | null = null;
+
+      if (pageCt.startsWith("image/")) {
+        // El link ya apunta a una imagen directa
+        imgUrl = u.href;
+      } else {
+        // Es HTML: extraer og:image
+        const html = await pageRes.text();
+        const m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+        if (m && m[1]) imgUrl = m[1];
+      }
+
+      if (!imgUrl) throw new Error("no_og_image");
+
+      const imgRes = await fetch(imgUrl, {
+        headers: { "user-agent": UA, "accept": "image/*" },
+      });
+      if (!imgRes.ok) throw new Error("img_fetch_failed");
+      const ct = imgRes.headers.get("content-type") || "image/jpeg";
       if (!ct.startsWith("image/")) throw new Error("not_image");
       const buf = await imgRes.arrayBuffer();
       const base64 = base64FromBytes(new Uint8Array(buf));
-      bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+      if (base64 && base64.length <= 7_000_000) {
+        bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+      }
     } catch {
       return json({ error: "error_imagenes", message: "No pude descargar la imagen del link. Probá subiendo la imagen directamente." }, 400);
     }
