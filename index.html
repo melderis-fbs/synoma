@@ -2257,6 +2257,129 @@ const NOMBRE_TIPO = {
   reciclado: 'Contenido reciclado', revision: 'Revisión', cicloventa: 'Ciclo de Venta', estrategia: 'Estrategia del mes', otro: 'Contenido',
 };
 
+/* =============================================================================
+   Descargar estrategia como PDF
+   ===========================================================================
+   Genera un PDF en el navegador usando window.print sobre una ventana nueva
+   con HTML prolijo y los colores de la marca. No depende de librerías externas. */
+
+function descargarEstrategiaPDF(titulo, texto){
+  const fecha = new Date().toLocaleDateString('es-AR', { year:'numeric', month:'long', day:'numeric' });
+  const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>${titulo}</title>
+<style>
+  @page { margin: 0; size: A4; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; color: #1c1c1c; background: #fff; }
+  .portada { background: #111111; color: #fff; padding: 64px 56px 48px; }
+  .marca { font-size: 13px; font-weight: 800; letter-spacing: .22em; text-transform: uppercase; color: #c96a1f; margin-bottom: 32px; }
+  .portada h1 { font-size: 38px; font-weight: 800; line-height: 1.1; letter-spacing: -.02em; margin-bottom: 16px; }
+  .portada .fecha { font-size: 14px; color: #9A9A9A; }
+  .cuerpo { padding: 48px 56px 64px; }
+  .cuerpo h2 { font-size: 18px; font-weight: 800; color: #111; margin: 36px 0 14px; padding-bottom: 8px; border-bottom: 2px solid #c96a1f; letter-spacing: -.01em; }
+  .cuerpo h2:first-child { margin-top: 0; }
+  .cuerpo p { font-size: 14px; line-height: 1.7; color: #1c1c1c; margin-bottom: 12px; }
+  .cuerpo ul { margin: 8px 0 16px 20px; }
+  .cuerpo li { font-size: 14px; line-height: 1.7; color: #1c1c1c; margin-bottom: 6px; }
+  .cuerpo strong { font-weight: 700; color: #111; }
+  .pie { padding: 24px 56px 40px; border-top: 1px solid #E6E1DA; }
+  .pie p { font-size: 12px; color: #7A7A7A; text-align: center; }
+  .semana { background: #FAFAF8; border: 1px solid #E6E1DA; border-radius: 12px; padding: 18px 22px; margin: 14px 0; }
+  .semana .num { font-size: 12px; font-weight: 800; color: #c96a1f; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 6px; }
+  .semana p { margin-bottom: 0; }
+  .destacado { background: #F2EEE9; border-left: 4px solid #c96a1f; border-radius: 0 10px 10px 0; padding: 16px 20px; margin: 20px 0; }
+  .destacado .etq { font-size: 11px; font-weight: 800; color: #c96a1f; letter-spacing: .14em; text-transform: uppercase; margin-bottom: 6px; }
+  .destacado p { margin-bottom: 0; }
+</style>
+</head>
+<body>
+  <div class="portada">
+    <div class="marca">Synoma · Founders</div>
+    <h1>${titulo}</h1>
+    <div class="fecha">${fecha}</div>
+  </div>
+  <div class="cuerpo">
+    ${formatearEstrategiaHTML(texto)}
+  </div>
+  <div class="pie">
+    <p>Generado con Synoma · Tu motor de contenido</p>
+  </div>
+</body>
+</html>`;
+  const w = window.open('', '_blank');
+  if(!w){ alert('Tu navegador bloqueó la ventana emergente. Permití las ventanas emergentes para descargar el PDF.'); return; }
+  w.document.write(html);
+  w.document.close();
+  setTimeout(() => { w.print(); }, 400);
+}
+
+/* Convierte el texto de la estrategia en HTML estructurado y visual.
+   Detecta secciones (OBJETIVO, QUÉ PROMOCIONAR, semana por semana, ACCIÓN)
+   y las formatea con tarjetas y destacados. */
+function formatearEstrategiaHTML(texto){
+  const limpio = texto.replace(/\*\*/g, '');
+  const lineas = limpio.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  let html = '';
+  let enLista = false;
+
+  function cerrarLista(){ if(enLista){ html += '</ul>'; enLista = false; } }
+
+  for(let i = 0; i < lineas.length; i++){
+    const l = lineas[i];
+    const lower = l.toLowerCase();
+
+    // Detectar encabezados de sección (números con punto, o palabras clave en mayúsculas)
+    const esSeccionNum = /^\d[\.\)]\s/.test(l);
+    const esSeccionClave =
+      /^(objetivo|qué promocionar|plan semana|acción|semana\s*\d)/i.test(lower) ||
+      /^(objetivo del mes|qué promocionar y cuándo|plan semana por semana|una acción para esta semana)/i.test(lower);
+
+    if(esSeccionNum || esSeccionClave){
+      cerrarLista();
+      let tituloSeccion = l.replace(/^\d[\.\)]\s*/, '').replace(/[:：]\s*$/, '');
+      // Quitar numeración de "1. OBJETIVO DEL MES:" → "OBJETIVO DEL MES"
+      tituloSeccion = tituloSeccion.replace(/^([A-ZÁÉÍÓÚÑ\s]+)[:：]?$/, '$1').trim();
+      html += `<h2>${escaparHTML(tituloSeccion)}</h2>`;
+      continue;
+    }
+
+    // Detectar "Semana 1:", "Semana 2:" etc. y armar tarjeta
+    const mSemana = l.match(/^semana\s*(\d+)\s*[:：]\s*(.*)$/i);
+    if(mSemana){
+      cerrarLista();
+      html += `<div class="semana"><div class="num">Semana ${mSemana[1]}</div><p>${escaparHTML(mSemana[2])}</p></div>`;
+      continue;
+    }
+
+    // Detectar item de lista (- o •)
+    if(/^[-•]\s/.test(l)){
+      if(!enLista){ html += '<ul>'; enLista = true; }
+      html += `<li>${escaparHTML(l.replace(/^[-•]\s*/, ''))}</li>`;
+      continue;
+    }
+
+    // Detectar línea de acción final
+    if(/^(acción|próximo paso|arrancá|empezá|hoy)/i.test(lower) && i > lineas.length / 2){
+      cerrarLista();
+      html += `<div class="destacado"><div class="etq">Tu acción de hoy</div><p>${escaparHTML(l)}</p></div>`;
+      continue;
+    }
+
+    // Línea normal → párrafo
+    cerrarLista();
+    html += `<p>${escaparHTML(l)}</p>`;
+  }
+  cerrarLista();
+  return html;
+}
+
+function escaparHTML(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
 function mostrarTarjeta(body, pieza, texto, truncada){
   const tipo = pieza.tipo || 'otro';
   body.dataset.texto = texto;
@@ -2274,9 +2397,13 @@ function mostrarTarjeta(body, pieza, texto, truncada){
 
   const sub = document.createElement('div');
   sub.className = 'tl-sub';
-  sub.textContent = tipo === 'plan'
-    ? 'Está en 📚 Mis contenidos. Miralo como calendario y bajátelo a tu agenda.'
-    : 'Está en 📚 Mis contenidos. Marcalo cuando lo grabes y cuando lo publiques.';
+  if(tipo === 'plan'){
+    sub.textContent = 'Está en 📚 Mis contenidos. Miralo como calendario y bajátelo a tu agenda.';
+  } else if(tipo === 'estrategia'){
+    sub.textContent = 'Está en 📚 Mis contenidos. Descargala como PDF para tenerla a mano.';
+  } else {
+    sub.textContent = 'Está en 📚 Mis contenidos. Marcalo cuando lo grabes y cuando lo publiques.';
+  }
 
   const acciones = document.createElement('div');
   acciones.className = 'tl-acciones';
@@ -2287,6 +2414,14 @@ function mostrarTarjeta(body, pieza, texto, truncada){
     cal.textContent = '📅 Ver mi calendario';
     cal.onclick = () => abrirCalendario(pieza.id);
     acciones.appendChild(cal);
+  }
+
+  if(tipo === 'estrategia'){
+    const pdf = document.createElement('button');
+    pdf.className = 'tl-btn';
+    pdf.textContent = '📄 Descargar como PDF';
+    pdf.onclick = () => descargarEstrategiaPDF(pieza.titulo || 'Estrategia del mes', texto);
+    acciones.appendChild(pdf);
   }
 
   const bib = document.createElement('button');
