@@ -727,11 +727,7 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
         return json({ error: "url_invalida", message: "El link tiene que ser de Instagram." }, 400);
       }
 
-      // Instagram bloquea fetch directo del post (login wall).
-      // Extraemos el shortcode del path y usamos el endpoint público /media/?size=l
-      // que redirige directamente a la CDN de Instagram sin autenticación.
       const pathParts = u.pathname.split("/").filter(Boolean);
-      // path puede ser ["p","ABCD123"] o ["reel","ABCD123"] o ["reels","ABCD123"]
       let shortcode: string | null = null;
       if (pathParts.length >= 2 && ["p", "reel", "reels", "tv"].includes(pathParts[0])) {
         shortcode = pathParts[1];
@@ -742,19 +738,103 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
         return json({ error: "url_invalida", message: "Ese link no parece un post de Instagram." }, 400);
       }
 
-      const mediaUrl = `https://www.instagram.com/p/${shortcode}/media/?size=l`;
       const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-      const imgRes = await fetch(mediaUrl, {
-        redirect: "follow",
-        headers: { "user-agent": UA, "accept": "image/*" },
-      });
-      if (!imgRes.ok) throw new Error("media_fetch_failed_" + imgRes.status);
-      const ct = imgRes.headers.get("content-type") || "image/jpeg";
-      if (!ct.startsWith("image/")) throw new Error("not_image_" + ct);
-      const buf = await imgRes.arrayBuffer();
-      const base64 = base64FromBytes(new Uint8Array(buf));
-      if (base64 && base64.length <= 7_000_000) {
-        bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+      let imgDescargada = false;
+      let ultimoError = "";
+
+      // Estrategia 1: endpoint /media/?size=l (redirige a CDN)
+      if (!imgDescargada) {
+        try {
+          const mediaUrl = `https://www.instagram.com/p/${shortcode}/media/?size=l`;
+          const imgRes = await fetch(mediaUrl, {
+            redirect: "follow",
+            headers: { "user-agent": UA, "accept": "image/*" },
+          });
+          const ct = imgRes.headers.get("content-type") || "";
+          if (imgRes.ok && ct.startsWith("image/")) {
+            const buf = await imgRes.arrayBuffer();
+            const base64 = base64FromBytes(new Uint8Array(buf));
+            if (base64 && base64.length <= 7_000_000) {
+              bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+              imgDescargada = true;
+            }
+          } else {
+            ultimoError = `media_${imgRes.status}_${ct}`;
+          }
+        } catch (e) { ultimoError = `media_exc_${e.message || e}`; }
+      }
+
+      // Estrategia 2: embed page (público, sin login) → extraer URL de imagen del HTML
+      if (!imgDescargada) {
+        try {
+          const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/`;
+          const embedRes = await fetch(embedUrl, {
+            redirect: "follow",
+            headers: { "user-agent": UA, "accept": "text/html" },
+          });
+          if (embedRes.ok) {
+            const html = await embedRes.text();
+            // El embed incluye un <img src="https://scontent-..."> con la imagen
+            const m = html.match(/<img[^>]+src=["'](https:\/\/scontent[^"']+)["']/i);
+            if (m && m[1]) {
+              const imgRes = await fetch(m[1], {
+                redirect: "follow",
+                headers: { "user-agent": UA, "accept": "image/*" },
+              });
+              const ct = imgRes.headers.get("content-type") || "";
+              if (imgRes.ok && ct.startsWith("image/")) {
+                const buf = await imgRes.arrayBuffer();
+                const base64 = base64FromBytes(new Uint8Array(buf));
+                if (base64 && base64.length <= 7_000_000) {
+                  bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+                  imgDescargada = true;
+                }
+              } else { ultimoError = `embed_img_${imgRes.status}`; }
+            } else { ultimoError = `embed_no_img`; }
+          } else { ultimoError = `embed_${embedRes.status}`; }
+        } catch (e) { ultimoError = `embed_exc_${e.message || e}`; }
+      }
+
+      // Estrategia 3: página del post con UA de navegador → og:image
+      if (!imgDescargada) {
+        try {
+          const postUrl = `https://www.instagram.com/p/${shortcode}/`;
+          const pageRes = await fetch(postUrl, {
+            redirect: "follow",
+            headers: {
+              "user-agent": UA,
+              "accept": "text/html,application/xhtml+xml",
+              "accept-language": "es-AR,es;q=0.9,en;q=0.8",
+            },
+          });
+          if (pageRes.ok) {
+            const html = await pageRes.text();
+            const m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
+            if (m && m[1]) {
+              const imgRes = await fetch(m[1], {
+                redirect: "follow",
+                headers: { "user-agent": UA, "accept": "image/*" },
+              });
+              const ct = imgRes.headers.get("content-type") || "";
+              if (imgRes.ok && ct.startsWith("image/")) {
+                const buf = await imgRes.arrayBuffer();
+                const base64 = base64FromBytes(new Uint8Array(buf));
+                if (base64 && base64.length <= 7_000_000) {
+                  bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+                  imgDescargada = true;
+                }
+              } else { ultimoError = `og_img_${imgRes.status}`; }
+            } else { ultimoError = `og_no_meta`; }
+          } else { ultimoError = `og_page_${pageRes.status}`; }
+        } catch (e) { ultimoError = `og_exc_${e.message || e}`; }
+      }
+
+      if (!imgDescargada) {
+        return json({
+          error: "error_imagenes",
+          message: "Instagram no me deja descargar la imagen desde el servidor. Subí la imagen directamente y funciona.",
+          debug: ultimoError,
+        }, 400);
       }
     } catch {
       return json({ error: "error_imagenes", message: "No pude descargar la imagen del link. Probá subiendo la imagen directamente." }, 400);
