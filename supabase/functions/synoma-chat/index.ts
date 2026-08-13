@@ -748,6 +748,12 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
 
   // --- Llamar a Claude (sin streaming, devolvemos el texto completo) ---
   let apiKey = Deno.env.get("ANTHROPIC_API_KEY");
+  if (!apiKey) {
+    try {
+      const keyRows = await sbSelect("config", "valor", `clave=eq.anthropic_key&limit=1`);
+      apiKey = keyRows?.[0]?.valor || null;
+    } catch {}
+  }
   if (!apiKey) return json({ error: "no_api_key", message: "Servicio no configurado." }, 500);
 
   let respuesta = "";
