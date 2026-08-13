@@ -1576,10 +1576,13 @@ async function analizarVisual(){
   try{
     const archivos = [];
     for(const f of visualFiles){
+      const dataUrl = await prepareVisualImage(f);
+      const blob = await (await fetch(dataUrl)).blob();
+      const path = await uploadToStorage(new File([blob], f.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' }));
       archivos.push({
         type: 'image',
-        media_type: f.type || 'image/png',
-        data_url: await prepareVisualImage(f),
+        media_type: 'image/jpeg',
+        storage_path: path,
         name: f.name,
       });
     }

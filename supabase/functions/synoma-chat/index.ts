@@ -685,16 +685,36 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
   // --- Construir prompt según tipo ---
   const promptSistema = construirPromptAnalisisVisual(tipo, p);
 
-  // --- Preparar imágenes: base64 directo (sin pasar por Storage) ---
+  // --- Preparar imágenes: descargar de Storage (mismo flujo que el chat) ---
   const bloques: any[] = [];
   for (const a of archivos) {
-    if (a?.type === "image" && a?.data_url) {
-      const partes = String(a.data_url).split(",");
-      const base64 = partes.length > 1 ? partes.slice(1).join("") : "";
-      const mediaType = a.media_type === "image/jpeg" || a.media_type === "image/png" ? a.media_type : "image/jpeg";
-      if (base64 && base64.length <= 7_000_000) {
-        bloques.push({ type: "image", source: { type: "base64", media_type: mediaType, data: base64 } });
-      }
+    if (a?.type === "image" && a?.storage_path) {
+      const bucket = "chat-attachments";
+      const url = `${Deno.env.get("SUPABASE_URL")}/storage/v1/object/${bucket}/${a.storage_path}`;
+      try {
+        const imgRes = await fetch(url, {
+          headers: {
+            apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        });
+        if (!imgRes.ok) continue;
+        const ct = imgRes.headers.get("content-type") || "image/jpeg";
+        if (!ct.startsWith("image/")) continue;
+        const buf = await imgRes.arrayBuffer();
+        const base64 = base64FromBytes(new Uint8Array(buf));
+        if (base64 && base64.length <= 7_000_000) {
+          bloques.push({ type: "image", source: { type: "base64", media_type: ct, data: base64 } });
+        }
+        // Limpiar del bucket
+        fetch(`${Deno.env.get("SUPABASE_URL")}/storage/v1/object/${bucket}/${a.storage_path}`, {
+          method: "DELETE",
+          headers: {
+            apikey: Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+            Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+        }).catch(() => {});
+      } catch { /* skip this image */ }
     }
   }
 
