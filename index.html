@@ -2172,6 +2172,37 @@ function botonGuardar(texto){
   return w;
 }
 
+// Botones de respuesta rápida para el Paso 1 de /estrategia: la idea para aprobar.
+// El cliente toca en lugar de tener que escribir.
+function botonesEstrategiaPaso1(){
+  const w = document.createElement('div');
+  w.className = 'estrategia-paso1-btns';
+  w.style.cssText = 'display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;';
+
+  const btnSi = document.createElement('button');
+  btnSi.className = 'tl-btn';
+  btnSi.style.cssText = 'background:#c96a1f; color:#fff; border:none; padding:12px 20px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer;';
+  btnSi.textContent = '✓ Me gusta, seguí';
+  btnSi.onclick = () => {
+    $('input').value = 'Me gusta, seguí con los 15 días';
+    btnSi.disabled = true; btnNo.disabled = true;
+    send();
+  };
+
+  const btnNo = document.createElement('button');
+  btnNo.className = 'tl-btn claro';
+  btnNo.style.cssText = 'background:#F2EEE9; color:#1c1c1c; border:1px solid #E6E1DA; padding:12px 20px; border-radius:10px; font-size:14px; font-weight:600; cursor:pointer;';
+  btnNo.textContent = '✗ Cambiemos el enfoque';
+  btnNo.onclick = () => {
+    $('input').value = 'Cambiemos el enfoque. ';
+    btnSi.disabled = true; btnNo.disabled = true;
+    $('input').focus();
+  };
+
+  w.append(btnSi, btnNo);
+  return w;
+}
+
 // Para las respuestas que NO vienen de un comando: el cliente le pidió algo
 // escribiendo y le gustó cómo salió.
 async function guardarAMano(texto, boton){
@@ -2630,6 +2661,12 @@ async function send(opciones = {}){
               mostrarTarjeta(body, piezaFinal, acc, ev.truncada);
             } else {
               body.parentNode.appendChild(botonGuardar(acc));
+              // Si la respuesta es el Paso 1 de /estrategia (la idea para aprobar),
+              // mostrar botones de respuesta rápida en lugar de que el cliente
+              // tenga que escribir.
+              if(/mensaje central del ciclo/i.test(acc) && /(¿te gusta|lo cambiamos|te gusta este enfoque)/i.test(acc)) {
+                body.parentNode.appendChild(botonesEstrategiaPaso1());
+              }
               // Se agotaron los tramos y sigue sin terminar: queda el botón manual.
               if(ev.truncada) body.parentNode.appendChild(avisoDeCorte(body, tramo, null));
             }

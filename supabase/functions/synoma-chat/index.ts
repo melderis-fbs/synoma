@@ -199,6 +199,62 @@ async function guardarSiEsPieza(clienteId: string, pregunta: string, respuesta: 
   return Array.isArray(rows) ? rows[0] : null;
 }
 
+// --- Estrategia: extraer ciclo de la respuesta de Claude ---
+// Solo se guarda cuando la respuesta contiene el cierre completo (mensaje central,
+// percepciones, 3 ideas a repetir, qué no publicar). Si la respuesta es solo el
+// Paso 1 (la idea para aprobar), no se guarda todavía: el ciclo se completa
+// cuando el cliente confirma y Claude genera los 15 días.
+function extraerCicloEstrategia(respuesta: string): {
+  mensaje_central: string;
+  percepcion_inicial: string;
+  percepcion_final: string;
+  ideas_repetir: string;
+  no_publicar: string;
+  dias: any;
+} | null {
+  const limpia = respuesta.replace(/\*\*/g, "");
+  
+  // Buscar mensaje central
+  const mMensaje = limpia.match(/mensaje central del ciclo\s*:?\s*["""](.+?)["""]/i)
+    || limpia.match(/mensaje central\s*:?\s*["""](.+?)["""]/i);
+  if (!mMensaje) return null;
+
+  // Buscar percepción inicial
+  const mInicial = limpia.match(/percepci[oó]n inicial\s*:?\s*(.+?)(?=\n\s*percepci|\n\s*mensaje|\n\s*3 ideas|\n\s*qu[eé] no)/is);
+  
+  // Buscar percepción final
+  const mFinal = limpia.match(/percepci[oó]n final\s*:?\s*(.+?)(?=\n\s*mensaje|\n\s*3 ideas|\n\s*qu[eé] no)/is);
+
+  // Buscar 3 ideas a repetir
+  const mIdeas = limpia.match(/3 ideas que debemos repetir\s*:?\s*(.+?)(?=\n\s*qu[eé] no|\n\s*===|\Z)/is);
+
+  // Buscar qué no publicar
+  const mNoPub = limpia.match(/qu[eé] no debemos publicar\s*:?\s*(.+?)(?=\n\s*===|\n\s*objetivo|\Z)/is);
+
+  // Buscar los días (DÍA 1, DÍA 2, etc.)
+  const dias: any[] = [];
+  const regexDia = /D[IÍ]A\s*(\d+)\s*\n([\s\S]*?)(?=D[IÍ]A\s*\d+|ACTO\s*2|PERCEPCI|3 IDEAS|QU[EÉ] NO|$)/gi;
+  let match;
+  while ((match = regexDia.exec(limpia)) !== null) {
+    dias.push({
+      dia: parseInt(match[1]),
+      contenido: match[2].trim(),
+    });
+  }
+
+  // Si no hay días en la respuesta, no es el cierre completo
+  if (dias.length === 0) return null;
+
+  return {
+    mensaje_central: mMensaje[1].trim(),
+    percepcion_inicial: mInicial ? mInicial[1].trim() : "",
+    percepcion_final: mFinal ? mFinal[1].trim() : "",
+    ideas_repetir: mIdeas ? mIdeas[1].trim() : "",
+    no_publicar: mNoPub ? mNoPub[1].trim() : "",
+    dias,
+  };
+}
+
 // --- Conversation helpers ---
 async function conversacionAbierta(clienteId: string, tipo: string = "synoma") {
   const rows = await sbSelect("conversaciones", "id", `cliente_id=eq.${clienteId}&tipo=eq.${tipo}&cerrada_en=is.null&order=actualizado_en.desc&limit=1`);
@@ -1175,7 +1231,85 @@ async function handleChat(cliente: { id: string }, req: Request) {
       estado.push(`- Piezas publicadas hoy: ${publicadasHoy.length}.`);
       if (publicadasHoy.length > 0) estado.push(`- Lo que ya publicó hoy: ${publicadasHoy.map((p: any) => p.titulo).join(", ")}.`);
 
+      // Si hay ciclo de estrategia activo, inyectar el día que corresponde
+      if (!cicloActivo) {
+        try {
+          const ciclos = await sbSelect("ciclos_estrategia", "id,mensaje_central,ideas_repetir,fecha_inicio,dias,numero_ciclo", `cliente_id=eq.${cliente.id}&estado=eq.activo&order=creado_en.desc&limit=1`);
+          const cicloEstrategia = ciclos?.[0];
+          if (cicloEstrategia) {
+            const diasDesdeInicio = Math.floor((hoy.getTime() - new Date(cicloEstrategia.fecha_inicio).getTime()) / (1000 * 60 * 60 * 24));
+            const diaCiclo = diasDesdeInicio + 1;
+            const diasArray = Array.isArray(cicloEstrategia.dias) ? cicloEstrategia.dias : [];
+            const diaActual = diasArray.find((d: any) => d.dia === diaCiclo) || diasArray[diasDesdeInicio];
+            estado.push(`- Tiene un CICLO DE ESTRATEGIA ACTIVO (ciclo ${cicloEstrategia.numero_ciclo}), iniciado el ${new Date(cicloEstrategia.fecha_inicio).toLocaleDateString("es-AR")}.`);
+            estado.push(`- Hoy es el DÍA ${diaCiclo} del ciclo.`);
+            if (diaActual) estado.push(`- La pieza de hoy es:\n${diaActual.contenido}`);
+            estado.push(`- Mensaje central del ciclo: "${cicloEstrategia.mensaje_central || ""}"`);
+            if (cicloEstrategia.ideas_repetir) estado.push(`- 3 ideas a repetir: ${cicloEstrategia.ideas_repetir}`);
+            estado.push(`\nUsá la pieza del día que corresponde del ciclo como base para recomendar qué publicar hoy. El mensaje central y las 3 ideas a repetir son el contexto para TODO lo que se genere hoy.`);
+          }
+        } catch {}
+      }
+
       system.push({ type: "text", text: `=== ESTADO DEL CLIENTE PARA "QUÉ PUBLICO HOY" ===\n${estado.join("\n")}\n=== FIN ===\n\nUsá esta información para determinar qué caso aplica de los 4 del comando /quepublico (ver instrucciones en el system prompt).` });
+    } catch {}
+  }
+
+  // /estrategia: motor de ciclos de 15 días
+  let esEstrategia = false;
+  if (/^\/estrategia\b/i.test(pregunta)) {
+    esEstrategia = true;
+    try {
+      // 1. Verificar si hay ciclo de promoción de ventas activo
+      const piezas = await sbSelect("piezas", "tipo,estado,creado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc&limit=100`);
+      const cicloVentaActivo = piezas.find((p: any) => p.tipo === "cicloventa" && p.estado !== "archivada");
+      if (cicloVentaActivo) {
+        system.push({ type: "text", text: `=== AVISO IMPORTANTE ===\nEl cliente tiene un CICLO DE PROMOCIÓN DE VENTAS ACTIVO. Ese ciclo manda sobre cualquier otro plan. NO ejecutes el motor de estrategia de 15 días. Decile al cliente que ya tiene un ciclo de promoción activo y que cuando termine puede generar su estrategia de contenido.\n=== FIN ===` });
+      } else {
+        // 2. Buscar ciclos de estrategia existentes
+        const ciclos = await sbSelect("ciclos_estrategia", "id,numero_ciclo,mensaje_central,estado,fecha_inicio,fecha_fin,creado_en", `cliente_id=eq.${cliente.id}&order=creado_en.desc&limit=5`);
+        const hoy = new Date();
+        const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString();
+
+        const ciclosEsteMes = (ciclos || []).filter((c: any) => new Date(c.creado_en) >= new Date(inicioMes));
+        const cicloActivo = (ciclos || []).find((c: any) => c.estado === "activo");
+        const cicloAnteriorCompletado = (ciclos || []).find((c: any) => c.estado === "completado");
+
+        // 3. Límite: máximo 2 ciclos por mes + 1 regeneración
+        const ciclosNuevosEsteMes = ciclosEsteMes.filter((c: any) => !c.regeneracion);
+        const regeneracionesEsteMes = ciclosEsteMes.filter((c: any) => c.regeneracion);
+
+        if (ciclosNuevosEsteMes.length >= 2 && regeneracionesEsteMes.length >= 1) {
+          system.push({ type: "text", text: `=== LÍMITE ALCANZADO ===\nEl cliente ya usó sus 2 ciclos + 1 regeneración de este mes. NO generes un ciclo nuevo. Decile que ya usó sus ciclos de este mes y ofrecéle editar días sueltos del ciclo activo en lugar de generar todo de cero. Editar un día suelto no cuenta contra el límite.\n=== FIN ===` });
+        } else if (cicloActivo) {
+          // Ya tiene un ciclo activo: ofrecer retomar o empezar nuevo
+          const diasTranscurridos = Math.floor((hoy.getTime() - new Date(cicloActivo.fecha_inicio).getTime()) / (1000 * 60 * 60 * 24));
+          system.push({ type: "text", text: `=== CICLO ACTIVO EXISTENTE ===\nEl cliente ya tiene un ciclo de estrategia ACTIVO (ciclo ${cicloActivo.numero_ciclo}), iniciado el ${new Date(cicloActivo.fecha_inicio).toLocaleDateString("es-AR")}. Van ${diasTranscurridos} días desde el inicio.\nMensaje central: "${cicloActivo.mensaje_central || "(no definido)"}"\n\nNO generes un ciclo nuevo automáticamente. Decile al cliente que ya tiene un ciclo en marcha y ofrecéle dos opciones:\n1. Retomar el que dejé por la mitad\n2. Empezar uno nuevo igual\nSi elige retomar, mostrale en qué día se quedó y seguí desde ahí.\nSi elige uno nuevo, marcá el anterior como abandonado y generá uno nuevo.\n=== FIN ===` });
+        } else if (cicloAnteriorCompletado && ciclosNuevosEsteMes.length === 1) {
+          // Es el ciclo 2: inyectar el ciclo anterior como contexto
+          system.push({ type: "text", text: `=== CICLO ANTERIOR (ciclo 1 del mes) ===\nMensaje central: "${cicloAnteriorCompletado.mensaje_central || ""}"\nFecha de inicio: ${new Date(cicloAnteriorCompletado.fecha_inicio).toLocaleDateString("es-AR")}\n\nEste es el CICLO 2 del mes. Leé el ciclo anterior y arrancá desde donde quedó. Más peso en prueba, método, resultados, deseo y conversión. La oferta aparece con más frecuencia.\n=== FIN ===` });
+        }
+      }
+    } catch {}
+  }
+
+  // Para todos los demás comandos de pieza: si hay ciclo de estrategia activo,
+  // inyectar el mensaje central y las 3 ideas a repetir como contexto
+  if (!esEstrategia && COMANDOS_PIEZA.some(c => new RegExp(`^/${c}\\b`, "i").test(pregunta))) {
+    try {
+      const ciclos = await sbSelect("ciclos_estrategia", "mensaje_central,ideas_repetir,fecha_inicio,dias,numero_ciclo", `cliente_id=eq.${cliente.id}&estado=eq.activo&order=creado_en.desc&limit=1`);
+      const cicloActivo = ciclos?.[0];
+      if (cicloActivo) {
+        const hoy = new Date();
+        const diasDesdeInicio = Math.floor((hoy.getTime() - new Date(cicloActivo.fecha_inicio).getTime()) / (1000 * 60 * 60 * 24));
+        const diaCiclo = diasDesdeInicio + 1;
+        const diasArray = Array.isArray(cicloActivo.dias) ? cicloActivo.dias : [];
+        const diaActual = diasArray.find((d: any) => d.dia === diaCiclo) || diasArray[diasDesdeInicio];
+        let ctx = `=== CICLO DE ESTRATEGIA ACTIVO (ciclo ${cicloActivo.numero_ciclo}, día ${diaCiclo}) ===\nMensaje central: "${cicloActivo.mensaje_central || ""}"\n3 ideas a repetir: ${cicloActivo.ideas_repetir || "(no definidas)"}\n`;
+        if (diaActual) ctx += `Pieza de hoy según el ciclo:\n${diaActual.contenido}\n`;
+        ctx += `=== FIN ===\nTodo lo que generes en esta pieza tiene que reforzar el mensaje central del ciclo y las 3 ideas a repetir. No escribas contenido que contradiga el posicionamiento del ciclo.`;
+        system.push({ type: "text", text: ctx });
+      }
     } catch {}
   }
 
@@ -1244,6 +1378,44 @@ async function handleChat(cliente: { id: string }, req: Request) {
 
         let pieza = null;
         try { pieza = await guardarSiEsPieza(cliente.id, pregunta, respuesta); } catch {}
+
+        // /estrategia: si la respuesta contiene el cierre del ciclo, guardarlo
+        if (esEstrategia && pieza) {
+          try {
+            const cicloData = extraerCicloEstrategia(respuesta);
+            if (cicloData) {
+              // Determinar número de ciclo
+              const hoy = new Date();
+              const inicioMes = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString();
+              const ciclos = await sbSelect("ciclos_estrategia", "id,numero_ciclo,regeneracion", `cliente_id=eq.${cliente.id}&creado_en=gt.${inicioMes}&order=creado_en.desc&limit=5`);
+              const ciclosNuevos = (ciclos || []).filter((c: any) => !c.regeneracion);
+              const numCiclo = ciclosNuevos.length >= 1 ? 2 : 1;
+
+              // Marcar ciclo anterior activo como abandonado si existe
+              const cicloActivoPrev = (ciclos || []).find((c: any) => c.estado === "activo");
+              if (cicloActivoPrev) {
+                await sbUpdate("ciclos_estrategia", { estado: "abandonado", actualizado_en: new Date().toISOString() }, `id=eq.${cicloActivoPrev.id}`);
+              }
+
+              const fechaInicio = hoy.toISOString().slice(0, 10);
+              const fechaFin = new Date(hoy.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+              await sbInsert("ciclos_estrategia", {
+                cliente_id: cliente.id,
+                mensaje_central: cicloData.mensaje_central,
+                percepcion_inicial: cicloData.percepcion_inicial,
+                percepcion_final: cicloData.percepcion_final,
+                ideas_repetir: cicloData.ideas_repetir,
+                no_publicar: cicloData.no_publicar,
+                dias: cicloData.dias,
+                numero_ciclo: numCiclo,
+                fecha_inicio: fechaInicio,
+                fecha_fin: fechaFin,
+                estado: "activo",
+              });
+            }
+          } catch {}
+        }
 
         const truncada = resultado === "tiempo" || stopReason === "max_tokens";
         emit({ type: "done", truncada, pieza: pieza ? { id: pieza.id, tipo: pieza.tipo, titulo: pieza.titulo } : null });
