@@ -727,43 +727,30 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
         return json({ error: "url_invalida", message: "El link tiene que ser de Instagram." }, 400);
       }
 
-      // Instagram bloquea descargas directas: devuelve un login wall HTML.
-      // Estrategia: fetch la página HTML con un User-Agent de navegador,
-      // extraer la URL del meta og:image, y descargar esa imagen (CDN de Instagram).
-      const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
-      const pageRes = await fetch(u.href, {
-        redirect: "follow",
-        headers: {
-          "user-agent": UA,
-          "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-          "accept-language": "es-AR,es;q=0.9,en;q=0.8",
-          "sec-fetch-dest": "document",
-          "sec-fetch-mode": "navigate",
-          "sec-fetch-site": "none",
-        },
-      });
-      const pageCt = pageRes.headers.get("content-type") || "";
-
-      let imgUrl: string | null = null;
-
-      if (pageCt.startsWith("image/")) {
-        // El link ya apunta a una imagen directa
-        imgUrl = u.href;
-      } else {
-        // Es HTML: extraer og:image
-        const html = await pageRes.text();
-        const m = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i);
-        if (m && m[1]) imgUrl = m[1];
+      // Instagram bloquea fetch directo del post (login wall).
+      // Extraemos el shortcode del path y usamos el endpoint público /media/?size=l
+      // que redirige directamente a la CDN de Instagram sin autenticación.
+      const pathParts = u.pathname.split("/").filter(Boolean);
+      // path puede ser ["p","ABCD123"] o ["reel","ABCD123"] o ["reels","ABCD123"]
+      let shortcode: string | null = null;
+      if (pathParts.length >= 2 && ["p", "reel", "reels", "tv"].includes(pathParts[0])) {
+        shortcode = pathParts[1];
+      } else if (pathParts.length === 1) {
+        shortcode = pathParts[0];
+      }
+      if (!shortcode) {
+        return json({ error: "url_invalida", message: "Ese link no parece un post de Instagram." }, 400);
       }
 
-      if (!imgUrl) throw new Error("no_og_image");
-
-      const imgRes = await fetch(imgUrl, {
+      const mediaUrl = `https://www.instagram.com/p/${shortcode}/media/?size=l`;
+      const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+      const imgRes = await fetch(mediaUrl, {
+        redirect: "follow",
         headers: { "user-agent": UA, "accept": "image/*" },
       });
-      if (!imgRes.ok) throw new Error("img_fetch_failed");
+      if (!imgRes.ok) throw new Error("media_fetch_failed_" + imgRes.status);
       const ct = imgRes.headers.get("content-type") || "image/jpeg";
-      if (!ct.startsWith("image/")) throw new Error("not_image");
+      if (!ct.startsWith("image/")) throw new Error("not_image_" + ct);
       const buf = await imgRes.arrayBuffer();
       const base64 = base64FromBytes(new Uint8Array(buf));
       if (base64 && base64.length <= 7_000_000) {
