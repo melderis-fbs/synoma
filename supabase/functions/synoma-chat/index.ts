@@ -285,10 +285,12 @@ function limpiarContenido(texto: string): string {
 
 function esClarificacion(respuesta: string): boolean {
   const limpia = respuesta.trim();
-  if (limpia.length < 800) return true;
-  if (limpia.length < 1500 && limpia.endsWith("?")) return true;
+  // Solo es clarificación si es muy corta Y termina con pregunta
+  // o arranca pidiendo datos. Una pieza de contenido de 400 caracteres
+  // (una historia, un post corto) sí se guarda.
+  if (limpia.length < 300 && limpia.endsWith("?")) return true;
   const primeraLinea = limpia.split("\n")[0].toLowerCase();
-  if (limpia.length < 1500 && /^(pasame|decime|para armar|para el|todav\u00eda no|necesito que|cu\u00e1l|decime el)/i.test(primeraLinea)) return true;
+  if (limpia.length < 300 && /^(pasame|decime|para armar|para el|todav\u00eda no|necesito que|cu\u00e1l|decime el)/i.test(primeraLinea)) return true;
   return false;
 }
 

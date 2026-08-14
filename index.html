@@ -2253,17 +2253,22 @@ async function guardarAMano(texto, boton){
   boton.disabled = true;
   boton.textContent = 'Guardando…';
   try{
-    // El guardado manual manda el texto como mensaje al chat con un prefijo
-    // que el servidor reconoce para guardarlo como pieza sin llamar a Claude.
     const res = await api('biblioteca', {
       method: 'POST',
       body: JSON.stringify({ contenido: texto }),
     });
     const data = await res.json();
-    if(data?.ok && data?.pieza) boton.replaceWith(notaGuardada(data.pieza, texto));
-    else throw new Error('save_failed');
+    if(data?.ok && data?.pieza){
+      boton.replaceWith(notaGuardada(data.pieza, texto));
+    } else if(data?.error === 'no_sesion'){
+      boton.textContent = '📚 Guardar en Mis contenidos';
+      boton.disabled = false;
+      volverAlLogin(data?.message || 'Tu sesión venció. Volvé a entrar.');
+    } else {
+      throw new Error(data?.message || 'save_failed');
+    }
   }catch(e){
-    boton.textContent = 'No se pudo';
+    boton.textContent = 'No se pudo — probá de nuevo';
     boton.disabled = false;
   }
 }
