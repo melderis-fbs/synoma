@@ -2720,6 +2720,12 @@ async function send(opciones = {}){
               // Se agotaron los tramos y sigue sin terminar: queda el botón manual.
               if(ev.truncada) body.parentNode.appendChild(avisoDeCorte(body, tramo, null));
             }
+            // Siempre se ofrece el botón de guardar, incluso si el servidor ya
+            // guardó la pieza: el cliente puede querer guardar la respuesta tal
+            // cual la ve en el chat, sin el procesamiento de limpieza de título.
+            if(piezaFinal && acc && acc.trim().length > 50){
+              body.parentNode.appendChild(botonGuardar(acc));
+            }
             scrollDown();
           }
         } else if(ev.type === 'error'){
