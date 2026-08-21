@@ -669,15 +669,11 @@ async function handleAnalisisVisual(cliente: { id: string }, req: Request) {
   const inicioSemana = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
 
   const historial = await sbSelect("analisis_visual", "tipo,creado_en", `cliente_id=eq.${cliente.id}&creado_en=gt.${inicioMes}`);
-  const diagnosticosMes = (historial || []).filter((h: any) => h.tipo === "diagnostico").length;
-  const chequeosSemana = (historial || []).filter((h: any) => h.tipo === "chequeo" && new Date(h.creado_en) >= new Date(inicioSemana)).length;
+  const totalMes = (historial || []).length;
 
-  if (tipo === "diagnostico" && diagnosticosMes >= 2) {
+  if (totalMes >= 5) {
     const proximoMes = new Date(ahora.getFullYear(), ahora.getMonth() + 1, 1).toLocaleDateString("es-AR", { day: "numeric", month: "long" });
-    return json({ error: "limite_alcanzado", message: `Ya usaste tus 2 diagnósticos completos de este mes. Se renuevan el ${proximoMes}.` }, 429);
-  }
-  if (tipo === "chequeo" && chequeosSemana >= 5) {
-    return json({ error: "limite_alcanzado", message: "Ya usaste tus 5 chequeos de esta semana. Se renuevan en 7 días." }, 429);
+    return json({ error: "limite_alcanzado", message: `Ya usaste tus 5 análisis de este mes. Se renuevan el ${proximoMes}.` }, 429);
   }
 
   // --- Obtener perfil del cliente para contexto ---
