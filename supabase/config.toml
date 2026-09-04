@@ -1,0 +1,5 @@
+[functions.synoma-chat]
+verify_jwt = false
+
+[functions.analyze-call]
+verify_jwt = false

@@ -343,6 +343,9 @@
     .descarga{flex:1;justify-content:center}
   }
 </style>
+  <meta property="og:image" content="https://bolt.new/static/og_default.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:image" content="https://bolt.new/static/og_default.png">
 </head>
 <body>
 
@@ -453,6 +456,7 @@
       <span class="who" id="who"></span>
       <button onclick="abrirBiblioteca()">Mis contenidos</button>
       <button onclick="abrirIdentidad()">Mi identidad</button>
+      <button id="nav-analizador" onclick="abrirAnalizador()" hidden>📞 Analizador</button>
       <button onclick="borrarHistorial()">Borrar chat</button>
       <button onclick="salir()">Salir</button>
     </div>
@@ -1255,6 +1259,14 @@ function entrarDash(){
   cargarHistorial();
   cargarProgreso();
   wireVisualUpload();
+  if(CLIENTE?.email && CLIENTE.email.endsWith('@foundersbs.com')){
+    const btn = $('nav-analizador');
+    if(btn) btn.hidden = false;
+  }
+}
+
+function abrirAnalizador(){
+  window.open('/analizador.html', '_blank');
 }
 
 function volverAlLogin(mensaje){

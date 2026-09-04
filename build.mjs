@@ -8,6 +8,7 @@ const dest = join(__dirname, 'dist');
 
 mkdirSync(dest, { recursive: true });
 cpSync(join(__dirname, 'index.html'), join(dest, 'index.html'));
+cpSync(join(__dirname, 'analizador.html'), join(dest, 'analizador.html'));
 
 // Copy everything in public/ (images, etc.) into dist/
 const publicDir = join(__dirname, 'public');
