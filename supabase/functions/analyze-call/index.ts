@@ -87,7 +87,7 @@ async function getConfig(clave: string): Promise<string | null> {
 }
 
 const MODEL = "claude-sonnet-5";
-const MAX_TOKENS = 10000;
+const MAX_TOKENS = 16000;
 
 const SYSTEM_PROMPT = `Sos un Sales Manager experto y coach de ventas de élite. Analizás transcripciones de llamadas de venta.
 
