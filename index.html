@@ -3986,6 +3986,45 @@ Object.assign(window, {
     `;
   }
 
+  const FASES_MADRE = [
+    ['Introducción', ['introduccion','apertura','rapport','quimica','saludo']],
+    ['Encuadre', ['encuadre','agenda','expectativas']],
+    ['Descubrimiento', ['descubrimiento','discovery','contexto','situacion actual','diagnostico','intento']],
+    ['Dolor', ['dolor','problema','desafio','frustracion']],
+    ['Por qué ahora', ['por que ahora','urgencia','timing','momento']],
+    ['Situación deseada', ['situacion deseada','objetivo','vision','resultado deseado','meta']],
+    ['Dinero', ['dinero','precio','inversion','presupuesto','capital','economic','roi','pago','silencio']],
+    ['Transición', ['transicion','pre-pitch','pre pitch','temperatura','termometro']],
+    ['Oferta', ['oferta','pitch','programa','propuesta','solucion','pilares','garantia','rod','apm']],
+    ['Cierre', ['cierre','objecion','objeciones','compromiso','seña','reserva','proximos pasos','co-decisor','codecisor']],
+  ];
+  function stripAccents(s){ return s.normalize('NFD').replace(/[\u0300-\u036f]/g, ''); }
+  function groupPhases(rawPerf){
+    const groups = {};
+    for(const [name, scores] of Object.entries(rawPerf)){
+      const norm = stripAccents(name.toLowerCase());
+      let madre = null;
+      for(const [mName, keys] of FASES_MADRE){
+        if(keys.some(k => norm.includes(k))){ madre = mName; break; }
+      }
+      const key = madre || name;
+      if(!groups[key]) groups[key] = { name: key, scores: [] };
+      groups[key].scores.push(...scores);
+    }
+    return Object.values(groups).map(g => ({
+      name: g.name,
+      avg: g.scores.reduce((a,b) => a+b, 0) / g.scores.length,
+      min: Math.min(...g.scores),
+      max: Math.max(...g.scores),
+    })).sort((a,b) => b.avg - a.avg);
+  }
+  function renderPhaseCards(entries){
+    if(!entries.length) return '';
+    return `<div class="prog-section"><div class="prog-section-title"><span class="em">♙</span> Performance por fase</div><div class="kpi-grid">${entries.map(pe =>
+      `<div class="kpi"><div class="label">${esc(pe.name)}</div><div class="value ${scoreColor(pe.avg)}">${pe.avg.toFixed(1)}</div><div class="label" style="margin-top:4px">mín ${pe.min.toFixed(1)} · máx ${pe.max.toFixed(1)}</div></div>`
+    ).join('')}</div></div>`;
+  }
+
   async function loadProgreso(){
     try {
       const calls = await sbFetch('calls', 'id,salesperson_name,prospect_name,call_date,call_result,status,created_at', `cliente_id=eq.${CLIENTE.id}&order=created_at.desc&limit=200`);
@@ -4059,19 +4098,7 @@ Object.assign(window, {
           phasePerf[p.name].push(Number(p.score || 0));
         });
       });
-      const phaseEntries = Object.entries(phasePerf).map(([name, scores]) => ({
-        name, avg: scores.reduce((a,b) => a+b, 0) / scores.length,
-      })).sort((a,b) => a.avg - b.avg);
-
-      let phaseHtml = '';
-      if(phaseEntries.length){
-        const weakest = phaseEntries[0];
-        const strongest = phaseEntries[phaseEntries.length-1];
-        phaseHtml = `
-          <div class="prog-phasesummary">Fase más débil: <b style="color:var(--red)">${esc(weakest.name)}</b> (${weakest.avg.toFixed(1)}) · Fase más fuerte: <b style="color:var(--green)">${esc(strongest.name)}</b> (${strongest.avg.toFixed(1)})</div>
-          ${phaseEntries.map(pe => `<div class="data-row"><div class="dr-label">${esc(pe.name)}</div><div class="dr-value"><b class="${scoreColor(pe.avg)}">${pe.avg.toFixed(1)}</b> / 10</div></div>`).join('')}
-        `;
-      }
+      const phaseHtml = renderPhaseCards(groupPhases(phasePerf));
 
       const recent = completed.slice(0, 15);
       const recentHtml = recent.length ? `
@@ -4095,7 +4122,7 @@ Object.assign(window, {
           ${chartHtml}
           ${trendHtml ? `<div class="prog-trend">${trendHtml}</div>` : ''}
         </div>
-        ${phaseHtml ? `<div class="prog-section"><div class="prog-section-title"><span class="em">♙</span> Performance por fase</div>${phaseHtml}</div>` : ''}
+        ${phaseHtml}
         ${recentHtml ? `<div class="prog-section"><div class="prog-section-title"><span class="em">▤</span> Últimas llamadas</div>${recentHtml}</div>` : ''}
       `;
 
@@ -4136,9 +4163,7 @@ Object.assign(window, {
         phasePerf[p.name].push(Number(p.score || 0));
       });
     });
-    const phaseEntries = Object.entries(phasePerf).map(([name, s]) => ({
-      name, avg: s.reduce((a,b) => a+b, 0) / s.length,
-    })).sort((a,b) => a.avg - b.avg);
+    const mPhaseHtml = renderPhaseCards(groupPhases(phasePerf));
 
     document.getElementById('prog-month-detail').innerHTML = `
       <div class="prog-section">
@@ -4149,7 +4174,7 @@ Object.assign(window, {
           <div class="kpi"><div class="label">Resultados</div><div class="value" style="font-size:14px;line-height:1.8;font-weight:500"><span style="color:var(--green)">${closed}</span> Cerradas · <span style="color:var(--red)">${lost}</span> Perdidas · <span style="color:var(--yellow)">${followup}</span> Seguimiento</div></div>
         </div>
       </div>
-      ${phaseEntries.length ? `<div class="prog-section"><div class="prog-section-title"><span class="em">♙</span> Performance por fase</div>${phaseEntries.map(pe => `<div class="data-row"><div class="dr-label">${esc(pe.name)}</div><div class="dr-value"><b class="${scoreColor(pe.avg)}">${pe.avg.toFixed(1)}</b> / 10</div></div>`).join('')}</div>` : ''}
+      ${mPhaseHtml}
       <div class="prog-section"><div class="prog-section-title"><span class="em">▤</span> Llamadas del mes</div>
       ${monthCalls.map(c => {
         const names = [c.salesperson_name, c.prospect_name].filter(Boolean).join(' · ') || 'Sin nombre';
