@@ -3990,7 +3990,7 @@ Object.assign(window, {
     ['Introducción', ['introduccion','apertura','rapport','quimica','saludo']],
     ['Encuadre', ['encuadre','agenda','expectativas']],
     ['Descubrimiento', ['descubrimiento','discovery','contexto','situacion actual','diagnostico','intento']],
-    ['Dolor', ['dolor','problema','desafio','frustracion']],
+    ['Dolor', ['dolor','problema','desafio','frustracion','dificultad']],
     ['Por qué ahora', ['por que ahora','urgencia','timing','momento']],
     ['Situación deseada', ['situacion deseada','objetivo','vision','resultado deseado','meta']],
     ['Dinero', ['dinero','precio','inversion','presupuesto','capital','economic','roi','pago','silencio']],
@@ -4016,12 +4016,19 @@ Object.assign(window, {
       avg: g.scores.reduce((a,b) => a+b, 0) / g.scores.length,
       min: Math.min(...g.scores),
       max: Math.max(...g.scores),
-    })).sort((a,b) => b.avg - a.avg);
+    })).sort((a,b) => {
+      const mi = FASES_MADRE.map(f => f[0]);
+      const ia = mi.indexOf(a.name), ib = mi.indexOf(b.name);
+      if(ia !== -1 && ib !== -1) return ia - ib;
+      if(ia !== -1) return -1;
+      if(ib !== -1) return 1;
+      return a.name.localeCompare(b.name);
+    });
   }
   function renderPhaseCards(entries){
     if(!entries.length) return '';
     return `<div class="prog-section"><div class="prog-section-title"><span class="em">♙</span> Performance por fase</div><div class="kpi-grid">${entries.map(pe =>
-      `<div class="kpi"><div class="label">${esc(pe.name)}</div><div class="value ${scoreColor(pe.avg)}">${pe.avg.toFixed(1)}</div><div class="label" style="margin-top:4px">mín ${pe.min.toFixed(1)} · máx ${pe.max.toFixed(1)}</div></div>`
+      `<div class="kpi"><div class="label">${esc(pe.name)}</div><div class="value" style="color:${pe.avg >= 8 ? 'var(--green)' : pe.avg >= 6 ? 'var(--black)' : pe.avg >= 4 ? 'var(--yellow)' : 'var(--red)'}">${pe.avg.toFixed(1)}</div><div class="label" style="margin-top:4px">mín ${pe.min.toFixed(1)} · máx ${pe.max.toFixed(1)}</div></div>`
     ).join('')}</div></div>`;
   }
 
