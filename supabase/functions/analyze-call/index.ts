@@ -87,7 +87,7 @@ async function getConfig(clave: string): Promise<string | null> {
 }
 
 const MODEL = "claude-sonnet-5";
-const MAX_TOKENS = 16000;
+const MAX_TOKENS = 20000;
 
 const SYSTEM_PROMPT = `Sos un Sales Manager experto y coach de ventas de élite. Analizás transcripciones de llamadas de venta.
 
@@ -274,6 +274,7 @@ Deno.serve(async (req: Request) => {
     const claudeData = await claudeRes.json();
     const textBlock = claudeData?.content?.find((b: any) => b?.type === "text");
     let rawText = textBlock?.text || "";
+    const stopReason = claudeData?.stop_reason || "";
 
     // --- Parse JSON from Claude response ---
     let analysis: any;
@@ -289,6 +290,46 @@ Deno.serve(async (req: Request) => {
         }
       } else {
         analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+      }
+    }
+
+    // --- If Claude truncated the response, retry with more tokens ---
+    if (stopReason === "max_tokens" && MAX_TOKENS < 24000) {
+      const retryRes = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 24000,
+          stream: false,
+          temperature: 0,
+          system: [{ type: "text", text: SYSTEM_PROMPT }],
+          messages: [{ role: "user", content: userMessage }],
+        }),
+      });
+      if (retryRes.ok) {
+        const retryData = await retryRes.json();
+        const retryText = retryData?.content?.find((b: any) => b?.type === "text")?.text || "";
+        if (retryText) {
+          rawText = retryText;
+          try {
+            const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+            analysis = JSON.parse(cleaned);
+          } catch {
+            const match = rawText.match(/\{[\s\S]*\}/);
+            if (match) {
+              try { analysis = JSON.parse(match[0]); } catch {
+                analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+              }
+            } else {
+              analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+            }
+          }
+        }
       }
     }
 
@@ -314,13 +355,13 @@ Deno.serve(async (req: Request) => {
 
     return json({ ok: true, analysis });
   } catch (err) {
-    // If we have a callId, try to mark it as failed
+    console.error("analyze-call error:", err);
     try {
       const body = await req.clone().json().catch(() => ({}));
       if (body?.callId) {
         await sbUpdate("calls", { status: "failed" }, `id=eq.${body.callId}`);
       }
     } catch {}
-    return json({ error: "server_error", message: "Error interno del servidor." }, 500);
+    return json({ error: "server_error", message: "Error interno del servidor.", debug: String(err?.message || err || "").slice(0, 500) }, 500);
   }
 });
