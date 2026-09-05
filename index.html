@@ -61,6 +61,16 @@
   .err{color:#e25950;font-size:13px;min-height:18px;margin-top:10px}
   .login-foot{text-align:center;color:var(--soft);font-size:11px;letter-spacing:.2em;text-transform:uppercase;margin-top:40px;font-weight:600}
 
+  /* ---------- LOGIN CHOICE ---------- */
+  .login-choice{display:flex;gap:12px;margin-bottom:6px}
+  .choice-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;padding:18px 12px;border:2px solid var(--border);
+    border-radius:14px;background:var(--bg);cursor:pointer;font-family:'Inter',sans-serif;transition:all .15s;text-align:center}
+  .choice-btn:hover{border-color:var(--beige)}
+  .choice-btn.on{border-color:var(--black);background:var(--cream)}
+  .choice-em{font-size:28px}
+  .choice-tit{font-size:14px;font-weight:800;color:var(--black)}
+  .choice-sub{font-size:11px;color:var(--muted);font-weight:600}
+
   /* ---------- SETUP ---------- */
   #view-setup .wrap{max-width:760px;margin:0 auto;padding:48px 24px 80px}
   #view-setup h2{font-size:34px;font-weight:800;letter-spacing:-.02em;color:var(--black);margin:8px 0 10px}
@@ -364,7 +374,20 @@
       <span class="pill">Acceso</span>
 
       <div id="paso-email">
-        <label>Tu email</label>
+        <label>¿Qué querés abrir?</label>
+        <div class="login-choice">
+          <button class="choice-btn choice-synoma on" type="button" onclick="selectLoginChoice('synoma')">
+            <span class="choice-em">✍️</span>
+            <span class="choice-tit">Synoma</span>
+            <span class="choice-sub">Motor de contenido</span>
+          </button>
+          <button class="choice-btn choice-analizador" type="button" onclick="selectLoginChoice('analizador')">
+            <span class="choice-em">📞</span>
+            <span class="choice-tit">Analizador de llamadas</span>
+            <span class="choice-sub">Revisá tus ventas</span>
+          </button>
+        </div>
+        <label style="margin-top:18px">Tu email</label>
         <small>El mismo con el que entraste a Founders. Te mandamos un código de 6 números.</small>
         <div class="code-row">
           <input id="email-input" type="email" placeholder="vos@email.com"
@@ -456,7 +479,7 @@
       <span class="who" id="who"></span>
       <button onclick="abrirBiblioteca()">Mis contenidos</button>
       <button onclick="abrirIdentidad()">Mi identidad</button>
-      <button id="nav-analizador" onclick="abrirAnalizador()" hidden>📞 Analizador</button>
+      <button onclick="abrirAnalizador()">📞 Analizador</button>
       <button onclick="borrarHistorial()">Borrar chat</button>
       <button onclick="salir()">Salir</button>
     </div>
@@ -778,6 +801,7 @@ const $ = id => document.getElementById(id);
 
 let EMAIL = '';        // solo durante el login
 let CLIENTE = null;    // { email, nombre, id } cuando hay sesión
+let LOGIN_CHOICE = 'synoma';  // 'synoma' o 'analizador'
 let CONFIG = { precio: '59', moneda: 'USD', renovacion_url: null };
 let SENDING = false;
 let CHAT_CARGADO = false;   // para no volver a pedir el historial en cada entrada
@@ -988,6 +1012,14 @@ function msgLogin(texto, tipo){
   el.style.color = tipo === 'info' ? 'var(--muted)' : '';
 }
 
+function selectLoginChoice(choice){
+  LOGIN_CHOICE = choice;
+  document.querySelectorAll('.choice-btn').forEach(b => b.classList.remove('on'));
+  const btn = choice === 'analizador' ? document.querySelector('.choice-analizador') : document.querySelector('.choice-synoma');
+  if(btn) btn.classList.add('on');
+}
+window.selectLoginChoice = selectLoginChoice;
+
 // Cuando el acceso terminó no se muestra un error: se muestra la oferta de
 // renovar. Es el momento en que la persona más ganas tiene de seguir.
 function mostrarRenovacion(datos){
@@ -1062,6 +1094,10 @@ async function pedirCodigo(reenvio){
       CLIENTE = { email: data.cliente.email, nombre: data.cliente.nombre, id: data.cliente.id };
       localStorage.setItem('synoma_cliente', JSON.stringify(CLIENTE));
       msgLogin('');
+      if(LOGIN_CHOICE === 'analizador'){
+        window.location.href = '/analizador.html';
+        return;
+      }
       if(data.tiene_perfil){
         entrarDash();
       } else {
@@ -1133,6 +1169,11 @@ async function confirmarCodigo(){
 
     $('dev-codigo').hidden = true;
     msgLogin('');
+
+    if(LOGIN_CHOICE === 'analizador'){
+      window.location.href = '/analizador.html';
+      return;
+    }
 
     if(data.tiene_perfil){
       entrarDash();
@@ -1252,6 +1293,7 @@ window.visualElegir = visualElegir;
 window.visualVolver = visualVolver;
 window.visualVolverAElegir = visualVolverAElegir;
 window.analizarVisual = analizarVisual;
+window.abrirAnalizador = abrirAnalizador;
 
 function entrarDash(){
   $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
@@ -1259,10 +1301,6 @@ function entrarDash(){
   cargarHistorial();
   cargarProgreso();
   wireVisualUpload();
-  if(CLIENTE?.email && CLIENTE.email.endsWith('@foundersbs.com')){
-    const btn = $('nav-analizador');
-    if(btn) btn.hidden = false;
-  }
 }
 
 function abrirAnalizador(){

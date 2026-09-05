@@ -250,11 +250,6 @@ Deno.serve(async (req: Request) => {
     const callId = String(payload?.callId || "").trim();
     if (!callId) return json({ error: "bad_data", message: "Falta el ID de la llamada." }, 400);
 
-    // --- Beta gate: only @foundersbs.com users ---
-    if (!cliente.email.endsWith("@foundersbs.com")) {
-      return json({ error: "no_access", message: "Esta función está en prueba. Solo disponible para el equipo Founders." }, 403);
-    }
-
     // --- Get the call, verify ownership ---
     const calls = await sbSelect("calls", "id,cliente_id,transcript,salesperson_name,prospect_name,call_date,call_result,playbook_version", `id=eq.${callId}&limit=1`);
     if (!calls || calls.length === 0) return json({ error: "not_found", message: "La llamada no existe." }, 404);

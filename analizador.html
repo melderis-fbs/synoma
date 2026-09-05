@@ -231,12 +231,6 @@
   <a href="/" id="back-link">Ir a Synoma</a>
 </div>
 
-<!-- BETA BANNER -->
-<div id="beta-banner" class="beta-banner" style="display:none;max-width:960px;margin:20px auto 0;padding:14px 18px">
-  <span class="em">🧪</span>
-  <span>Esta función está en prueba (modo beta). Solo disponible para el equipo Founders.</span>
-</div>
-
 <!-- TABS + SCREENS -->
 <div id="app" style="display:none">
   <div class="tabs">
@@ -377,25 +371,13 @@ async function init(){
   if(!sesion){
     document.getElementById('no-session').style.display = 'block';
     document.getElementById('app').style.display = 'none';
-    document.getElementById('beta-banner').style.display = 'none';
     return;
   }
   TOKEN = sesion.token;
   CLIENTE = sesion.cliente;
 
-  // Beta gate
-  if(!CLIENTE.email.endsWith('@foundersbs.com')){
-    document.getElementById('no-session').style.display = 'block';
-    document.getElementById('app').style.display = 'none';
-    document.getElementById('beta-banner').style.display = 'none';
-    document.querySelector('#no-session h2').textContent = 'Acceso restringido';
-    document.querySelector('#no-session p').textContent = 'El Analizador de Llamadas está en prueba. Solo disponible para el equipo Founders.';
-    return;
-  }
-
   document.getElementById('who').textContent = (CLIENTE.nombre || CLIENTE.email || '').trim();
   document.getElementById('app').style.display = 'block';
-  document.getElementById('beta-banner').style.display = 'flex';
 
   // Default date = today
   document.getElementById('up-date').value = new Date().toISOString().slice(0,10);
