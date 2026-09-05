@@ -537,6 +537,9 @@
   #proj-analizador .list-item-title{font-size:15px;font-weight:700;color:var(--black)}
   #proj-analizador .list-item-meta{font-size:13px;color:var(--muted);margin-top:3px}
   #proj-analizador .list-item-score{font-size:20px;font-weight:700;flex:0 0 auto;color:var(--beige-d)}
+  #proj-analizador .del-call-btn{background:none;border:none;cursor:pointer;font-size:16px;padding:6px;opacity:.3;transition:opacity .15s;flex:0 0 auto}
+  #proj-analizador .del-call-btn:hover{opacity:.8}
+  #proj-analizador .del-call-btn:disabled{opacity:.15;cursor:default}
 
   /* ===== TOGGLE ===== */
   #proj-analizador .toggle-group{display:flex;gap:8px;margin-bottom:24px}
@@ -3577,6 +3580,17 @@ Object.assign(window, {
     return res.json();
   }
 
+  async function sbDelete(table, filter){
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+      method: 'DELETE',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      },
+    });
+    if(!res.ok) throw new Error(`sb delete ${table}: ${res.status}`);
+  }
+
   function switchScreen(name){
     document.querySelectorAll('#proj-analizador .screen').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('#proj-analizador .tab').forEach(t => t.classList.remove('active'));
@@ -3678,6 +3692,7 @@ Object.assign(window, {
             </div>
             <span class="badge ${c.status}">${statusLabel(c.status)}</span>
             ${scoreHtml}
+            <button class="del-call-btn" title="Borrar llamada" onclick="event.stopPropagation();window.anaDeleteCall('${c.id}',this)">&#128465;</button>
           </div>
         `;
       }).join('');
@@ -3686,6 +3701,22 @@ Object.assign(window, {
       document.getElementById('hist-list').innerHTML = '<div class="empty">Error al cargar el historial.</div>';
     }
   }
+
+  async function deleteCall(callId, btn){
+    if(!confirm('\u00bfSeguro que quer\u00e9s borrar esta llamada? Esta acci\u00f3n no se puede deshacer.')) return;
+    try {
+      btn.disabled = true;
+      await sbDelete('call_analyses', `call_id=eq.${callId}&cliente_id=eq.${CLIENTE.id}`);
+      await sbDelete('calls', `id=eq.${callId}&cliente_id=eq.${CLIENTE.id}`);
+      const row = btn.closest('.list-item');
+      if(row) row.remove();
+      loadHistorial();
+    } catch(e){
+      alert('No se pudo borrar la llamada. Intent\u00e1 de nuevo.');
+      btn.disabled = false;
+    }
+  }
+  window.anaDeleteCall = deleteCall;
 
   async function loadAnalisis(callId){
     if(pollTimer){ clearInterval(pollTimer); pollTimer = null; }
