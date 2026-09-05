@@ -259,6 +259,7 @@ Deno.serve(async (req: Request) => {
         model: MODEL,
         max_tokens: MAX_TOKENS,
         stream: false,
+        thinking: { type: "disabled" },
         system: [{ type: "text", text: SYSTEM_PROMPT }],
         messages: [{ role: "user", content: userMessage }],
       }),
@@ -278,12 +279,18 @@ Deno.serve(async (req: Request) => {
     // --- Parse JSON from Claude response ---
     let analysis: any;
     try {
-      const s = rawText.indexOf("{");
-      const e = rawText.lastIndexOf("}");
-      const jsonStr = (s !== -1 && e !== -1) ? rawText.slice(s, e + 1) : rawText;
-      analysis = JSON.parse(jsonStr);
+      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      analysis = JSON.parse(cleaned);
     } catch {
-      analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+      const match = rawText.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { analysis = JSON.parse(match[0]); } catch {
+          // Guardar lo que devolvió Claude aunque no sea JSON válido
+          analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+        }
+      } else {
+        analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
+      }
     }
 
     // --- Save analysis ---
