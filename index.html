@@ -3430,11 +3430,24 @@ Object.assign(window, {
     try { return { token, cliente: JSON.parse(data) }; } catch { return null; }
   }
 
+  function _dbg(msg){
+    var d = document.getElementById('ana-debug2');
+    if(!d){
+      d = document.createElement('div');
+      d.id = 'ana-debug2';
+      d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#1a1a1a;color:#4ade80;padding:12px 20px;font:12px/1.5 monospace;white-space:pre-wrap;max-height:200px;overflow-y:auto';
+      document.body.appendChild(d);
+    }
+    d.textContent += msg + '\n';
+  }
   async function init(){
+    _dbg('init: start');
     const sesion = leerSesionLocal();
+    _dbg('init: sesion=' + (sesion ? 'yes' : 'null'));
     if(!sesion) return;
     TOKEN = sesion.token;
     CLIENTE = sesion.cliente;
+    _dbg('init: CLIENTE.id=' + CLIENTE.id);
 
     const whoEl = document.getElementById('ana-who');
     if(whoEl) whoEl.textContent = (CLIENTE.nombre || CLIENTE.email || '').trim();
@@ -3442,18 +3455,27 @@ Object.assign(window, {
     const upDate = document.getElementById('up-date');
     if(upDate) upDate.value = new Date().toISOString().slice(0,10);
 
+    _dbg('init: fetching playbook...');
     let hasPlaybook = false;
     try {
       const playbooks = await sbFetch('sales_playbooks', 'id', `cliente_id=eq.${CLIENTE.id}&is_active=eq.true&limit=1`);
+      _dbg('init: playbook fetch ok, count=' + (playbooks ? playbooks.length : 0));
       hasPlaybook = playbooks && playbooks.length > 0;
-    } catch {}
+    } catch(e) {
+      _dbg('init: playbook fetch ERROR: ' + (e.message || e));
+    }
 
+    _dbg('init: hasPlaybook=' + hasPlaybook);
     if(!hasPlaybook){
+      _dbg('init: switchScreen config');
       switchScreen('config');
     } else {
+      _dbg('init: loadPlaybook');
       loadPlaybook();
     }
+    _dbg('init: loadHistorial');
     loadHistorial();
+    _dbg('init: done');
   }
   window._anaInit = init;
 
