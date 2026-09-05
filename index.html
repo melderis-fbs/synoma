@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Synoma Founders — Tu Motor de Contenido</title>
+<title>Synoma Founders — Tu Motor</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
   :root{
@@ -1615,7 +1615,8 @@ function showChooser(){
 
 function entrarProject(proj){
   localStorage.setItem('synoma_last_project', proj);
-  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-chooser').classList.remove('active');
+  document.getElementById('view-login').classList.remove('active');
   const shell = document.getElementById('app-shell');
   shell.classList.add('on');
   if(proj === 'synoma'){
@@ -1630,8 +1631,8 @@ function entrarProject(proj){
     shell.classList.add('is-analizador');
     shell.classList.remove('is-synoma');
     if(!window._anaInitialized){
-      window._anaInit();
       window._anaInitialized = true;
+      try { window._anaInit(); } catch(e) { console.error('anaInit', e); }
     }
   }
 }
@@ -1646,8 +1647,8 @@ function switchProject(proj){
     shell.classList.add('is-analizador');
     shell.classList.remove('is-synoma');
     if(!window._anaInitialized){
-      window._anaInit();
       window._anaInitialized = true;
+      try { window._anaInit(); } catch(e) { console.error('anaInit', e); }
     }
   }
 }
