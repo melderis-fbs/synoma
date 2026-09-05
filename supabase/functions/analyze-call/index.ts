@@ -87,7 +87,7 @@ async function getConfig(clave: string): Promise<string | null> {
 }
 
 const MODEL = "claude-sonnet-5";
-const MAX_TOKENS = 20000;
+const MAX_TOKENS = 12000;
 
 const SYSTEM_PROMPT = `Sos un Sales Manager experto y coach de ventas de élite. Analizás transcripciones de llamadas de venta.
 
@@ -259,6 +259,7 @@ Deno.serve(async (req: Request) => {
         model: MODEL,
         max_tokens: MAX_TOKENS,
         stream: false,
+        thinking: { type: "disabled" },
         system: [{ type: "text", text: SYSTEM_PROMPT }],
         messages: [{ role: "user", content: userMessage }],
       }),
@@ -289,45 +290,6 @@ Deno.serve(async (req: Request) => {
         }
       } else {
         analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
-      }
-    }
-
-    // --- If Claude truncated the response, retry with more tokens ---
-    if (stopReason === "max_tokens" && MAX_TOKENS < 24000) {
-      const retryRes = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "x-api-key": apiKey,
-          "anthropic-version": "2023-06-01",
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 24000,
-          stream: false,
-          system: [{ type: "text", text: SYSTEM_PROMPT }],
-          messages: [{ role: "user", content: userMessage }],
-        }),
-      });
-      if (retryRes.ok) {
-        const retryData = await retryRes.json();
-        const retryText = retryData?.content?.find((b: any) => b?.type === "text")?.text || "";
-        if (retryText) {
-          rawText = retryText;
-          try {
-            const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-            analysis = JSON.parse(cleaned);
-          } catch {
-            const match = rawText.match(/\{[\s\S]*\}/);
-            if (match) {
-              try { analysis = JSON.parse(match[0]); } catch {
-                analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
-              }
-            } else {
-              analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
-            }
-          }
-        }
       }
     }
 
