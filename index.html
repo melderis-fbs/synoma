@@ -3476,6 +3476,24 @@ Object.assign(window, {
     _dbg('init: loadHistorial');
     loadHistorial();
     _dbg('init: done');
+
+    // DEBUG: check computed styles
+    setTimeout(function(){
+      var shell = document.getElementById('app-shell');
+      var proj = document.getElementById('proj-analizador');
+      var scr = document.getElementById('screen-upload');
+      if(shell) _dbg('shell computed display=' + getComputedStyle(shell).display);
+      if(proj) _dbg('proj-analizador computed display=' + getComputedStyle(proj).display);
+      if(scr) _dbg('screen-upload computed display=' + getComputedStyle(scr).display + ' class=' + scr.className);
+      // Inject a test box
+      if(proj){
+        var t = document.createElement('div');
+        t.style.cssText = 'background:red;color:white;padding:20px;font-size:20px;position:relative;z-index:9999';
+        t.textContent = 'TEST: si ves esto, el proj-analizador está visible';
+        proj.insertBefore(t, proj.firstChild);
+        _dbg('test box injected');
+      }
+    }, 500);
   }
   window._anaInit = init;
 
