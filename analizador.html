@@ -325,10 +325,6 @@
     <p class="sub">Tu playbook personal de ventas. El analizador usa esto para evaluar cada llamada.</p>
 
     <div class="field">
-      <label>Nombre del proceso</label>
-      <input type="text" id="pb-name" placeholder="Ej: Proceso Founders">
-    </div>
-    <div class="field">
       <label>Oferta</label>
       <small>Producto, precio, cliente ideal, propuesta de valor.</small>
       <textarea id="pb-offer" style="min-height:120px" placeholder="Describí tu oferta…"></textarea>
@@ -382,9 +378,19 @@ async function init(){
   // Default date = today
   document.getElementById('up-date').value = new Date().toISOString().slice(0,10);
 
-  // Load initial data
+  // Check if playbook exists — if not, show config first
+  let hasPlaybook = false;
+  try {
+    const playbooks = await sbFetch('sales_playbooks', 'id', `cliente_id=eq.${CLIENTE.id}&is_active=eq.true&limit=1`);
+    hasPlaybook = playbooks && playbooks.length > 0;
+  } catch {}
+
+  if(!hasPlaybook){
+    switchScreen('config');
+  } else {
+    loadPlaybook();
+  }
   loadHistorial();
-  loadPlaybook();
 }
 
 // --- API helper ---
@@ -1076,9 +1082,8 @@ function progSelectMonth(m){
 // --- CONFIG ---
 async function loadPlaybook(){
   try {
-    const playbooks = await sbFetch('sales_playbooks', 'id,name,offer_text,script_text,version,is_active', `cliente_id=eq.${CLIENTE.id}&is_active=eq.true&order=created_at.desc&limit=1`);
+    const playbooks = await sbFetch('sales_playbooks', 'id,offer_text,script_text,version,is_active', `cliente_id=eq.${CLIENTE.id}&is_active=eq.true&order=created_at.desc&limit=1`);
     if(playbooks && playbooks.length){
-      document.getElementById('pb-name').value = playbooks[0].name || '';
       document.getElementById('pb-offer').value = playbooks[0].offer_text || '';
       document.getElementById('pb-script').value = playbooks[0].script_text || '';
     }
@@ -1086,10 +1091,8 @@ async function loadPlaybook(){
 }
 
 async function savePlaybook(){
-  const name = document.getElementById('pb-name').value.trim();
   const offer = document.getElementById('pb-offer').value.trim();
   const script = document.getElementById('pb-script').value.trim();
-  if(!name){ showMsg('pb-msg', 'Falta el nombre del proceso.', 'red'); return; }
   if(!script){ showMsg('pb-msg', 'Falta el script de venta.', 'red'); return; }
 
   const btn = document.getElementById('pb-save');
@@ -1102,7 +1105,8 @@ async function savePlaybook(){
     // Insert new
     await sbInsert('sales_playbooks', {
       cliente_id: CLIENTE.id,
-      name, offer_text: offer || null, script_text: script,
+      name: 'Mi playbook',
+      offer_text: offer || null, script_text: script,
       version: 1, is_active: true,
     });
     showMsg('pb-msg', 'Guardado.', 'green');
