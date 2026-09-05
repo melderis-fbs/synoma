@@ -278,11 +278,10 @@ Deno.serve(async (req: Request) => {
     // --- Parse JSON from Claude response ---
     let analysis: any;
     try {
-      const stripped = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
-      const first = stripped.indexOf("{");
-      const last = stripped.lastIndexOf("}");
-      const cleaned = (first !== -1 && last > first) ? stripped.slice(first, last + 1) : stripped;
-      analysis = JSON.parse(cleaned);
+      const s = rawText.indexOf("{");
+      const e = rawText.lastIndexOf("}");
+      const jsonStr = (s !== -1 && e !== -1) ? rawText.slice(s, e + 1) : rawText;
+      analysis = JSON.parse(jsonStr);
     } catch {
       analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
     }
