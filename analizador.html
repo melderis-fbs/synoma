@@ -615,7 +615,7 @@ async function loadAnalisis(callId){
 
     renderAnalisis(call, analyses[0]);
   } catch(e){
-    document.getElementById('analisis-content').innerHTML = '<div class="empty">Error al cargar el análisis.</div>';
+    document.getElementById('analisis-content').innerHTML = '<div class="empty">Error al cargar el análisis: ' + esc(e.message || String(e)) + '</div>';
   }
 }
 
@@ -817,8 +817,8 @@ function renderAnalisis(call, analysisData){
           ${dr('Autoridad', pp.authority)}
           ${dr('Objeción principal', pp.main_objection)}
           ${dr('Riesgo de no cierre', pp.close_risk)}
-          ${pp.buying_signals ? `<div class="data-row"><div class="dr-label">Señales de compra</div><div class="dr-value">${pp.buying_signals.map(esc).join(', ')}</div></div>` : ''}
-          ${pp.warning_signals ? `<div class="data-row"><div class="dr-label">Señales de alerta</div><div class="dr-value">${pp.warning_signals.map(esc).join(', ')}</div></div>` : ''}
+          ${(pp.buying_signals && Array.isArray(pp.buying_signals)) ? `<div class="data-row"><div class="dr-label">Señales de compra</div><div class="dr-value">${pp.buying_signals.map(esc).join(', ')}</div></div>` : ''}
+          ${(pp.warning_signals && Array.isArray(pp.warning_signals)) ? `<div class="data-row"><div class="dr-label">Señales de alerta</div><div class="dr-value">${pp.warning_signals.map(esc).join(', ')}</div></div>` : ''}
         </div></div>
       </div>
     `;
@@ -856,7 +856,7 @@ function renderAnalisis(call, analysisData){
   `;
 
   // Download PDF button
-  html += `<div class="btn-row" style="margin-top:24px"><button class="btn" onclick="downloadPDF('${esc(callId)}')">⬇ Descargar PDF</button></div>`;
+  html += `<div class="btn-row" style="margin-top:24px"><button class="btn" onclick="downloadPDF()">⬇ Descargar PDF</button></div>`;
 
   document.getElementById('analisis-content').innerHTML = html;
 }
@@ -1147,6 +1147,14 @@ function downloadPDF(callId){
 
 // --- HELPERS ---
 function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function fbBlock(label, text){
+  if(!text) return '';
+  return `<div class="feedback-block"><div class="fb-label">${esc(label)}</div><div class="fb-text">${esc(text)}</div></div>`;
+}
+function dr(label, value){
+  if(!value) return '';
+  return `<div class="data-row"><div class="dr-label">${esc(label)}</div><div class="dr-value">${esc(value)}</div></div>`;
+}
 function scoreColor(v){ return v >= 8 ? 'score-green' : v >= 6 ? 'score-yellow' : 'score-red'; }
 function pctColor(v){ return v >= 80 ? 'score-green' : v >= 60 ? 'score-yellow' : 'score-red'; }
 function statusLabel(s){ return {pending:'Pendiente',analyzing:'Analizando',completed:'Completado',failed:'Error'}[s] || s; }
