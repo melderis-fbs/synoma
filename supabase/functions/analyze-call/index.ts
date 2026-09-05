@@ -262,7 +262,10 @@ Deno.serve(async (req: Request) => {
         temperature: 0,
         thinking: { type: "disabled" },
         system: [{ type: "text", text: SYSTEM_PROMPT }],
-        messages: [{ role: "user", content: userMessage }],
+        messages: [
+          { role: "user", content: userMessage },
+          { role: "assistant", content: "{" },
+        ],
       }),
     });
 
@@ -274,24 +277,18 @@ Deno.serve(async (req: Request) => {
 
     const claudeData = await claudeRes.json();
     const textBlock = claudeData?.content?.find((b: any) => b?.type === "text");
-    let rawText = textBlock?.text || "";
+    let rawText = "{" + (textBlock?.text || "");
     const stopReason = claudeData?.stop_reason || "";
 
     // --- Parse JSON from Claude response ---
     let analysis: any;
     try {
-      const cleaned = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const first = rawText.indexOf("{");
+      const last = rawText.lastIndexOf("}");
+      const cleaned = (first !== -1 && last > first) ? rawText.slice(first, last + 1) : rawText;
       analysis = JSON.parse(cleaned);
     } catch {
-      const match = rawText.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { analysis = JSON.parse(match[0]); } catch {
-          // Guardar lo que devolvió Claude aunque no sea JSON válido
-          analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
-        }
-      } else {
-        analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
-      }
+      analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
     }
 
     // --- Save analysis ---
