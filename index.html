@@ -3482,8 +3482,8 @@ Object.assign(window, {
       var shell = document.getElementById('app-shell');
       var proj = document.getElementById('proj-analizador');
       var scr = document.getElementById('screen-upload');
-      if(shell) _dbg('shell computed display=' + getComputedStyle(shell).display);
-      if(proj) _dbg('proj-analizador computed display=' + getComputedStyle(proj).display);
+      if(shell) _dbg('shell computed display=' + getComputedStyle(shell).display + ' | class=' + shell.className);
+      if(proj) _dbg('proj computed display=' + getComputedStyle(proj).display + ' | class=' + proj.className);
       if(scr) _dbg('screen-upload computed display=' + getComputedStyle(scr).display + ' class=' + scr.className);
       // Inject a test box
       if(proj){
