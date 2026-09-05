@@ -87,7 +87,7 @@ async function getConfig(clave: string): Promise<string | null> {
 }
 
 const MODEL = "claude-sonnet-5";
-const MAX_TOKENS = 8000;
+const MAX_TOKENS = 10000;
 
 const SYSTEM_PROMPT = `Sos un Sales Manager experto y coach de ventas de élite. Analizás transcripciones de llamadas de venta.
 
@@ -97,42 +97,90 @@ const SYSTEM_PROMPT = `Sos un Sales Manager experto y coach de ventas de élite.
 - El vendedor diagnostica preguntando, no enseñando
 - Resultado ≠ Ejecución: una venta puede ocurrir a pesar de una mala llamada
 - NO INVENTAR. Toda crítica debe tener cita de la transcripción o referencia al script
+- Sé conciso en cada campo. Calidad sobre cantidad.
 
 ## OUTPUT
 Devolvé ÚNICAMENTE un JSON válido. Sin texto antes ni después. Sin markdown.
-Estructura:
+Estructura EXACTA:
 {
   "overall_score": <0-10>,
   "script_adherence": <0-100>,
   "sales_quality": <0-10>,
   "summary": "<diagnóstico en 2-3 líneas>",
-  "best_thing": "<lo mejor, una cosa>",
+  "primary_strength": "<fortaleza principal>",
+  "primary_improvement": "<mejora principal>",
+  "next_call_action": "<una acción concreta y observable para la próxima>",
+  "best_thing": "<lo mejor de la llamada, una cosa>",
   "hardest_thing": "<lo que más costó, una cosa>",
-  "next_call_action": "<una acción concreta para la próxima>",
   "phases": [
     {
-      "name": "<fase>",
+      "name": "<nombre de la fase>",
+      "weight": <peso 0-100>,
       "score": <0-10>,
       "status": "executed|partial|missing|deviated_good",
-      "what_happened": "<qué hizo el closer>",
-      "evidence": "<cita de la transcripción>",
-      "alternative_script": "<frase concreta que podría haber usado o null>"
+      "objective": "<qué buscaba conseguir esta fase>",
+      "what_happened": "<qué hizo el closer, sin juzgar>",
+      "evidence": "<cita exacta de la transcripción>",
+      "what_went_well": ["<máximo 3 puntos>"],
+      "what_to_improve": ["<máximo 3 puntos>"],
+      "missed_opportunity": "<frase del prospecto que merecía seguimiento o null>",
+      "alternative_script": "<frase concreta que el closer podría haber usado o null>"
+    }
+  ],
+  "missed_opportunities": [
+    {
+      "prospect_said": "<cita>",
+      "why_it_mattered": "<explicación breve>",
+      "could_have_asked": "<pregunta específica>"
     }
   ],
   "objections": [
     {
-      "type": "precio|timing|confianza|producto|otra",
+      "type": "precio|liquidez|timing|pareja|confianza|producto|autoridad|implementacion|miedo|prioridad|pensar|comparacion|urgencia|otra",
       "stated": "<objeción textual>",
+      "real_objection": "<posible objeción real>",
+      "closer_response": "<cómo respondió>",
       "response_quality": <0-10>,
       "better_response": "<qué podría haber hecho distinto>"
     }
   ],
+  "critical_errors": [
+    {
+      "title": "<título del error>",
+      "impact": "ALTO|MEDIO|BAJO",
+      "what_happened": "<descripción breve>",
+      "what_to_do": "<instrucción concreta>"
+    }
+  ],
+  "key_moments": ["<momento 1>", "<momento 2>"],
+  "prospect_profile": {
+    "fit": "alto|medio|bajo",
+    "main_problem": "<problema principal>",
+    "desired_outcome": "<resultado deseado>",
+    "motivation": "<motivación>",
+    "urgency": "<urgencia>",
+    "budget": "<capacidad económica>",
+    "authority": "<autoridad de decisión>",
+    "main_objection": "<objeción principal>",
+    "close_risk": "<riesgo de no cierre>",
+    "buying_signals": ["<señal 1>"],
+    "warning_signals": ["<señal 1>"]
+  },
   "victoria_feedback": {
-    "my_reading": "<lectura estratégica, 1-2 párrafos>",
+    "my_reading": "<1-2 párrafos, lectura estratégica de la llamada>",
     "the_real_problem": "<el verdadero problema, no el síntoma>",
-    "what_i_would_do": "<qué haría diferente, 1-2 acciones>",
-    "for_next_call": "<una acción para la próxima>"
-  }
+    "the_moment": "<el momento donde yo me hubiera quedado + evidencia>",
+    "what_i_would_do": "<qué haría diferente, máximo 3 acciones>",
+    "why": "<explicación simple de la lógica>",
+    "for_next_call": "<una acción para la próxima llamada>",
+    "one_thing_to_practice": "<una habilidad a practicar>"
+  },
+  "confidence_score": <0-100>,
+  "talk_ratio": {"closer": <porcentaje>, "prospect": <porcentaje>} | null,
+  "training_exercise": {
+    "context": "<contexto del ejercicio>",
+    "question": "<pregunta para el closer>"
+  } | null
 }`;
 
 Deno.serve(async (req: Request) => {
