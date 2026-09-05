@@ -4004,7 +4004,10 @@ Object.assign(window, {
       const scores = completed.map(c => scoreMap[c.id]);
       const avgScore = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(1) : '—';
       const closed = completed.filter(c => c.call_result === 'venta').length;
+      const lost = completed.filter(c => c.call_result === 'no_venta').length;
+      const followup = completed.filter(c => c.call_result === 'seguimiento').length;
       const closeRate = totalCalls ? ((closed / totalCalls) * 100).toFixed(0) + '%' : '—';
+      const scoreLbl = Number(avgScore) >= 8 ? 'Excelente' : Number(avgScore) >= 6 ? 'Bueno' : Number(avgScore) >= 4 ? 'Regular' : avgScore === '—' ? '' : 'Necesita mejorar';
 
       const adherences = completed.map(c => Number(fullMap[c.id]?.script_adherence || 0));
       const avgAdherence = adherences.length ? (adherences.reduce((a,b) => a+b, 0) / adherences.length).toFixed(0) + '%' : '—';
@@ -4079,14 +4082,13 @@ Object.assign(window, {
       ` : '';
 
       document.getElementById('prog-total').innerHTML = `
-        <div class="kpi-grid">
-          <div class="kpi"><div class="label">Total llamadas</div><div class="value">${totalCalls}</div></div>
-          <div class="kpi"><div class="label">Score promedio</div><div class="value ${scoreColor(Number(avgScore))}">${avgScore}</div></div>
-          <div class="kpi"><div class="label">Adherencia</div><div class="value">${avgAdherence}</div></div>
-          <div class="kpi"><div class="label">Tasa de cierre</div><div class="value">${closeRate}</div></div>
-          <div class="kpi"><div class="label">Calidad comercial</div><div class="value ${scoreColor(Number(avgQuality))}">${avgQuality}</div></div>
-          <div class="kpi"><div class="label">Llamadas analizadas</div><div class="value">${totalCalls}</div></div>
-          <div class="kpi"><div class="label">Ventas cerradas</div><div class="value">${closed}</div></div>
+        <div class="prog-section">
+          <div class="kpi-grid" style="margin-bottom:0">
+            <div class="kpi"><div class="label">Nota media</div><div class="value ${scoreColor(Number(avgScore))}">${avgScore}</div>${scoreLbl ? `<div class="label" style="margin-top:4px">${scoreLbl}</div>` : ''}</div>
+            <div class="kpi"><div class="label">Llamadas analizadas</div><div class="value">${totalCalls}</div></div>
+            <div class="kpi"><div class="label">Tasa de cierre</div><div class="value">${closeRate}</div><div class="label" style="margin-top:4px">${closed} cerradas de ${totalCalls}</div></div>
+            <div class="kpi"><div class="label">Resultados</div><div class="value" style="font-size:14px;line-height:1.8;font-weight:500"><span style="color:var(--green)">${closed}</span> Cerradas · <span style="color:var(--red)">${lost}</span> Perdidas · <span style="color:var(--yellow)">${followup}</span> Seguimiento</div></div>
+          </div>
         </div>
         <div class="prog-section">
           <div class="prog-section-title"><span class="em">▣</span> Evolución mensual</div>
@@ -4120,11 +4122,10 @@ Object.assign(window, {
     const scores = monthCalls.map(c => scoreMap[c.id]);
     const avg = scores.length ? (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(1) : '—';
     const closed = monthCalls.filter(c => c.call_result === 'venta').length;
+    const lost = monthCalls.filter(c => c.call_result === 'no_venta').length;
+    const followup = monthCalls.filter(c => c.call_result === 'seguimiento').length;
     const closeRate = monthCalls.length ? ((closed / monthCalls.length) * 100).toFixed(0) + '%' : '—';
-    const adherences = monthCalls.map(c => Number(fullMap[c.id]?.script_adherence || 0));
-    const avgAdh = adherences.length ? (adherences.reduce((a,b) => a+b, 0) / adherences.length).toFixed(0) + '%' : '—';
-    const qualities = monthCalls.map(c => Number(fullMap[c.id]?.sales_quality || 0));
-    const avgQ = qualities.length ? (qualities.reduce((a,b) => a+b, 0) / qualities.length).toFixed(1) : '—';
+    const mScoreLbl = Number(avg) >= 8 ? 'Excelente' : Number(avg) >= 6 ? 'Bueno' : Number(avg) >= 4 ? 'Regular' : avg === '—' ? '' : 'Necesita mejorar';
 
     const phasePerf = {};
     monthCalls.forEach(c => {
@@ -4140,13 +4141,13 @@ Object.assign(window, {
     })).sort((a,b) => a.avg - b.avg);
 
     document.getElementById('prog-month-detail').innerHTML = `
-      <div class="kpi-grid">
-        <div class="kpi"><div class="label">Llamadas</div><div class="value">${monthCalls.length}</div></div>
-        <div class="kpi"><div class="label">Score promedio</div><div class="value ${scoreColor(Number(avg))}">${avg}</div></div>
-        <div class="kpi"><div class="label">Adherencia</div><div class="value">${avgAdh}</div></div>
-        <div class="kpi"><div class="label">Tasa de cierre</div><div class="value">${closeRate}</div></div>
-        <div class="kpi"><div class="label">Calidad</div><div class="value ${scoreColor(Number(avgQ))}">${avgQ}</div></div>
-        <div class="kpi"><div class="label">Ventas</div><div class="value">${closed}</div></div>
+      <div class="prog-section">
+        <div class="kpi-grid" style="margin-bottom:0">
+          <div class="kpi"><div class="label">Nota media</div><div class="value ${scoreColor(Number(avg))}">${avg}</div>${mScoreLbl ? `<div class="label" style="margin-top:4px">${mScoreLbl}</div>` : ''}</div>
+          <div class="kpi"><div class="label">Llamadas analizadas</div><div class="value">${monthCalls.length}</div></div>
+          <div class="kpi"><div class="label">Tasa de cierre</div><div class="value">${closeRate}</div><div class="label" style="margin-top:4px">${closed} cerradas de ${monthCalls.length}</div></div>
+          <div class="kpi"><div class="label">Resultados</div><div class="value" style="font-size:14px;line-height:1.8;font-weight:500"><span style="color:var(--green)">${closed}</span> Cerradas · <span style="color:var(--red)">${lost}</span> Perdidas · <span style="color:var(--yellow)">${followup}</span> Seguimiento</div></div>
+        </div>
       </div>
       ${phaseEntries.length ? `<div class="prog-section"><div class="prog-section-title"><span class="em">♙</span> Performance por fase</div>${phaseEntries.map(pe => `<div class="data-row"><div class="dr-label">${esc(pe.name)}</div><div class="dr-value"><b class="${scoreColor(pe.avg)}">${pe.avg.toFixed(1)}</b> / 10</div></div>`).join('')}</div>` : ''}
       <div class="prog-section"><div class="prog-section-title"><span class="em">▤</span> Llamadas del mes</div>
