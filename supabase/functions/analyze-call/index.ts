@@ -260,7 +260,6 @@ Deno.serve(async (req: Request) => {
         max_tokens: MAX_TOKENS,
         stream: false,
         temperature: 0,
-        thinking: { type: "disabled" },
         system: [{ type: "text", text: SYSTEM_PROMPT }],
         messages: [{ role: "user", content: userMessage }],
       }),
