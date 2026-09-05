@@ -914,8 +914,8 @@
       <h2>Progreso</h2>
       <p class="sub">Tu evolución a lo largo del tiempo.</p>
       <div class="toggle-group">
-        <button class="toggle-btn active" onclick="anaProgView('total')">Total</button>
-        <button class="toggle-btn" onclick="anaProgView('month')">Por mes</button>
+        <button class="toggle-btn active" onclick="anaProgView('total', event)">Total</button>
+        <button class="toggle-btn" onclick="anaProgView('month', event)">Por mes</button>
       </div>
       <div id="prog-total"></div>
       <div id="prog-month" style="display:none"></div>
@@ -1628,6 +1628,7 @@ function showChooser(){
 }
 
 function entrarProject(proj){
+  console.log('entrarProject called with:', proj);
   localStorage.setItem('synoma_last_project', proj);
   document.getElementById('view-chooser').classList.remove('active');
   document.getElementById('view-login').classList.remove('active');
@@ -1644,9 +1645,29 @@ function entrarProject(proj){
   } else {
     shell.classList.add('is-analizador');
     shell.classList.remove('is-synoma');
+    var dbg = document.createElement('div');
+    dbg.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#1a1a1a;color:#4ade80;padding:12px 20px;font:12px/1.5 monospace;white-space:pre-wrap';
+    dbg.id = 'ana-debug';
+    dbg.textContent = 'entrarProject analizador OK | shell.on=' + shell.classList.contains('on') + ' | is-analizador=' + shell.classList.contains('is-analizador') + ' | _anaInit=' + (typeof window._anaInit);
+    document.body.appendChild(dbg);
+    setTimeout(function(){ if(dbg) dbg.remove(); }, 8000);
     if(!window._anaInitialized){
       window._anaInitialized = true;
-      try { window._anaInit(); } catch(e) { console.error('anaInit', e); }
+      try {
+        window._anaInit().catch(function(e){
+          console.error('anaInit async', e);
+          var d = document.createElement('div');
+          d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
+          d.textContent = 'anaInit ASYNC ERROR: ' + (e && e.message ? e.message : String(e));
+          document.body.appendChild(d);
+        });
+      } catch(e) {
+        console.error('anaInit', e);
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
+        d.textContent = 'anaInit ERROR: ' + (e.message || e);
+        document.body.appendChild(d);
+      }
     }
   }
 }
@@ -1662,7 +1683,21 @@ function switchProject(proj){
     shell.classList.remove('is-synoma');
     if(!window._anaInitialized){
       window._anaInitialized = true;
-      try { window._anaInit(); } catch(e) { console.error('anaInit', e); }
+      try {
+        window._anaInit().catch(function(e){
+          console.error('anaInit async', e);
+          var d = document.createElement('div');
+          d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
+          d.textContent = 'anaInit ASYNC ERROR: ' + (e && e.message ? e.message : String(e));
+          document.body.appendChild(d);
+        });
+      } catch(e) {
+        console.error('anaInit', e);
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
+        d.textContent = 'anaInit ERROR: ' + (e.message || e);
+        document.body.appendChild(d);
+      }
     }
   }
 }
@@ -3994,7 +4029,7 @@ Object.assign(window, {
         ${recentHtml}
       `;
 
-      const monthSelectorHtml = months.map(m => `<button class="toggle-btn ${progSelectedMonth === m ? 'active' : ''}" onclick="window.anaProgSelectMonth('${m}')">${m.slice(5)}/${m.slice(2,4)}</button>`).join('');
+      const monthSelectorHtml = months.map(m => `<button class="toggle-btn ${progSelectedMonth === m ? 'active' : ''}" onclick="window.anaProgSelectMonth('${m}', event)">${m.slice(5)}/${m.slice(2,4)}</button>`).join('');
       document.getElementById('prog-month').innerHTML = `
         <div class="month-selector">${monthSelectorHtml || '<p style="color:var(--muted)">Sin datos.</p>'}</div>
         <div id="prog-month-detail"></div>
@@ -4054,19 +4089,19 @@ Object.assign(window, {
     `;
   }
 
-  function progView(view){
+  function progView(view, ev){
     progCurrentView = view;
     document.querySelectorAll('#proj-analizador .toggle-group .toggle-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    if(ev && ev.target) ev.target.classList.add('active');
     document.getElementById('prog-total').style.display = view === 'total' ? 'block' : 'none';
     document.getElementById('prog-month').style.display = view === 'month' ? 'block' : 'none';
   }
   window.anaProgView = progView;
 
-  function progSelectMonth(m){
+  function progSelectMonth(m, ev){
     progSelectedMonth = m;
     document.querySelectorAll('#proj-analizador #prog-month .toggle-btn').forEach(b => b.classList.remove('active'));
-    event.target.classList.add('active');
+    if(ev && ev.target) ev.target.classList.add('active');
     loadProgreso();
   }
   window.anaProgSelectMonth = progSelectMonth;

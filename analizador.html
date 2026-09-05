@@ -311,8 +311,8 @@
     <p class="sub">Tu evolución a lo largo del tiempo.</p>
 
     <div class="toggle-group">
-      <button class="toggle-btn active" onclick="progView('total')">Total</button>
-      <button class="toggle-btn" onclick="progView('month')">Por mes</button>
+      <button class="toggle-btn active" onclick="progView('total', event)">Total</button>
+      <button class="toggle-btn" onclick="progView('month', event)">Por mes</button>
     </div>
     <div id="prog-total"></div>
     <div id="prog-month" style="display:none"></div>
@@ -1017,7 +1017,7 @@ async function loadProgreso(){
     `;
 
     // --- MONTH VIEW ---
-    const monthSelectorHtml = months.map(m => `<button class="toggle-btn ${progSelectedMonth === m ? 'active' : ''}" onclick="progSelectMonth('${m}')">${m.slice(5)}/${m.slice(2,4)}</button>`).join('');
+    const monthSelectorHtml = months.map(m => `<button class="toggle-btn ${progSelectedMonth === m ? 'active' : ''}" onclick="progSelectMonth('${m}', event)">${m.slice(5)}/${m.slice(2,4)}</button>`).join('');
     document.getElementById('prog-month').innerHTML = `
       <div class="month-selector">${monthSelectorHtml || '<p style="color:var(--muted)">Sin datos.</p>'}</div>
       <div id="prog-month-detail"></div>
@@ -1078,18 +1078,18 @@ function renderProgMonth(month, byMonth, completed, scoreMap, fullMap){
   `;
 }
 
-function progView(view){
+function progView(view, ev){
   progCurrentView = view;
   document.querySelectorAll('.toggle-group .toggle-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if(ev && ev.target) ev.target.classList.add('active');
   document.getElementById('prog-total').style.display = view === 'total' ? 'block' : 'none';
   document.getElementById('prog-month').style.display = view === 'month' ? 'block' : 'none';
 }
 
-function progSelectMonth(m){
+function progSelectMonth(m, ev){
   progSelectedMonth = m;
   document.querySelectorAll('#prog-month .toggle-btn').forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  if(ev && ev.target) ev.target.classList.add('active');
   loadProgreso();
 }
 
@@ -1185,7 +1185,14 @@ function openAnalisis(callId){ currentCallId = callId; switchScreen('analisis');
 function volverASynoma(){ window.location.href = '/'; }
 
 // --- INIT ---
-try { init(); } catch(e){
+try {
+  init().catch(function(e){
+    var d = document.createElement('div');
+    d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
+    d.textContent = 'INIT ASYNC ERROR: ' + (e && e.message ? e.message : String(e));
+    document.body.appendChild(d);
+  });
+} catch(e){
   var d = document.createElement('div');
   d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
   d.textContent = 'INIT ERROR: ' + (e.message || e);
