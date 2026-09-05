@@ -262,10 +262,7 @@ Deno.serve(async (req: Request) => {
         temperature: 0,
         thinking: { type: "disabled" },
         system: [{ type: "text", text: SYSTEM_PROMPT }],
-        messages: [
-          { role: "user", content: userMessage },
-          { role: "assistant", content: "{" },
-        ],
+        messages: [{ role: "user", content: userMessage }],
       }),
     });
 
@@ -277,15 +274,16 @@ Deno.serve(async (req: Request) => {
 
     const claudeData = await claudeRes.json();
     const textBlock = claudeData?.content?.find((b: any) => b?.type === "text");
-    let rawText = "{" + (textBlock?.text || "");
+    let rawText = textBlock?.text || "";
     const stopReason = claudeData?.stop_reason || "";
 
     // --- Parse JSON from Claude response ---
     let analysis: any;
     try {
-      const first = rawText.indexOf("{");
-      const last = rawText.lastIndexOf("}");
-      const cleaned = (first !== -1 && last > first) ? rawText.slice(first, last + 1) : rawText;
+      const stripped = rawText.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+      const first = stripped.indexOf("{");
+      const last = stripped.lastIndexOf("}");
+      const cleaned = (first !== -1 && last > first) ? stripped.slice(first, last + 1) : stripped;
       analysis = JSON.parse(cleaned);
     } catch {
       analysis = { summary: rawText.slice(0, 2000), overall_score: null, script_adherence: null, sales_quality: null };
