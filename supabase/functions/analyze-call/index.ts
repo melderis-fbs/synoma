@@ -259,9 +259,9 @@ Deno.serve(async (req: Request) => {
         model: MODEL,
         max_tokens: MAX_TOKENS,
         stream: false,
+        temperature: 0,
         system: [{ type: "text", text: SYSTEM_PROMPT }],
         messages: [{ role: "user", content: userMessage }],
-        output_config: { effort: "low" },
       }),
     });
 
