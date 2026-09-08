@@ -3387,7 +3387,10 @@ $('codigo-input').addEventListener('input', e=>{
     } else {
       await abrirIdentidad();
     }
-  }catch(e){ /* sin sesión válida: queda en login */ }
+  }catch(e){
+    console.warn('boot: perfil check failed', e);
+    if(CLIENTE) showChooser();
+  }
 })();
 
 /* =============================================================================
