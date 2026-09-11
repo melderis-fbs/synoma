@@ -1699,43 +1699,40 @@ function showChooser(){
 }
 
 function entrarProject(proj){
-  console.log('entrarProject called with:', proj);
-  localStorage.setItem('synoma_last_project', proj);
-  document.getElementById('view-chooser').classList.remove('active');
-  document.getElementById('view-login').classList.remove('active');
-  const shell = document.getElementById('app-shell');
-  shell.classList.add('on');
-  if(proj === 'synoma'){
-    shell.classList.add('is-synoma');
-    shell.classList.remove('is-analizador');
-    show('view-dash');
-    $('who').textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
-    cargarHistorial();
-    cargarProgreso();
-    wireVisualUpload();
-  } else {
-    shell.classList.add('is-analizador');
-    shell.classList.remove('is-synoma');
-    document.getElementById('proj-analizador').style.display = 'block';
-    document.getElementById('proj-synoma').style.display = 'none';
-    if(!window._anaInitialized){
-      window._anaInitialized = true;
-      try {
-        window._anaInit().catch(function(e){
-          console.error('anaInit async', e);
-          var d = document.createElement('div');
-          d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
-          d.textContent = 'anaInit ASYNC ERROR: ' + (e && e.message ? e.message : String(e));
-          document.body.appendChild(d);
-        });
-      } catch(e) {
-        console.error('anaInit', e);
-        var d = document.createElement('div');
-        d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
-        d.textContent = 'anaInit ERROR: ' + (e.message || e);
-        document.body.appendChild(d);
+  try{
+    localStorage.setItem('synoma_last_project', proj);
+    document.getElementById('view-chooser').classList.remove('active');
+    document.getElementById('view-login').classList.remove('active');
+    const shell = document.getElementById('app-shell');
+    shell.classList.add('on');
+    if(proj === 'synoma'){
+      shell.classList.add('is-synoma');
+      shell.classList.remove('is-analizador');
+      show('view-dash');
+      const whoEl = $('who');
+      if(whoEl) whoEl.textContent = (CLIENTE?.nombre || CLIENTE?.email || '').trim();
+      cargarHistorial();
+      cargarProgreso();
+      wireVisualUpload();
+    } else {
+      shell.classList.add('is-analizador');
+      shell.classList.remove('is-synoma');
+      document.getElementById('proj-analizador').style.display = 'block';
+      document.getElementById('proj-synoma').style.display = 'none';
+      if(!window._anaInitialized){
+        window._anaInitialized = true;
+        try {
+          window._anaInit().catch(function(e){
+            console.error('anaInit async', e);
+          });
+        } catch(e) {
+          console.error('anaInit', e);
+        }
       }
     }
+  }catch(e){
+    console.error('entrarProject error:', e);
+    ensureVisible();
   }
 }
 
@@ -3379,11 +3376,10 @@ $('codigo-input').addEventListener('input', e=>{
 
   CLIENTE = sesion.cliente;
 
-  // Valida que la sesión siga activa consultando el perfil (que requiere sesión válida)
   try{
     const res = await api('perfil');
     if(!res.ok){
-      if(res.status === 401) borrarSesionLocal();
+      if(res.status === 401){ borrarSesionLocal(); show('view-login'); }
       else showChooser();
       return;
     }
@@ -3395,9 +3391,23 @@ $('codigo-input').addEventListener('input', e=>{
     }
   }catch(e){
     console.warn('boot: perfil check failed', e);
-    if(CLIENTE) showChooser();
+    showChooser();
   }
+
+  ensureVisible();
 })();
+
+function ensureVisible(){
+  const any = document.querySelector('.view.active');
+  if(any){
+    const shell = document.getElementById('app-shell');
+    if(shell && any.closest('#app-shell') && !shell.classList.contains('on')){
+      shell.classList.add('on','is-synoma');
+    }
+    return;
+  }
+  show('view-login');
+}
 
 /* =============================================================================
    Parser del plan semanal y generadores de ICS/CSV (client-side)
