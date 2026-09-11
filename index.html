@@ -1367,8 +1367,10 @@ async function prepareFiles(chat){
 }
 
 function show(view){
+  const el = $(view);
+  if(!el){ console.error('show: element not found:', view); return; }
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
-  $(view).classList.add('active');
+  el.classList.add('active');
 }
 
 // Sesión: el token lo genera el servidor al verificar el código, y se guarda
