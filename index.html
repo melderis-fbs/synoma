@@ -1590,6 +1590,9 @@ async function salir(){
    ============================================================================= */
 
 async function abrirIdentidad(){
+  const shell = document.getElementById('app-shell');
+  shell.classList.add('on', 'is-synoma');
+  shell.classList.remove('is-analizador');
   show('view-setup');
   $('setup-msg').textContent = '';
 
@@ -3377,9 +3380,10 @@ $('codigo-input').addEventListener('input', e=>{
   // Valida que la sesión siga activa consultando el perfil (que requiere sesión válida)
   try{
     const res = await api('perfil');
-    if(res.status === 401){
-      borrarSesionLocal();
-      return; // queda en login
+    if(!res.ok){
+      if(res.status === 401) borrarSesionLocal();
+      else showChooser();
+      return;
     }
     const data = await res.json();
     if(data?.perfil?.oferta?.trim()){
