@@ -3419,16 +3419,29 @@ function ensureVisible(){
 setTimeout(function(){
   const anyVisible = document.querySelector('.view.active');
   if(anyVisible && anyVisible.offsetHeight > 0) return;
-  var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#1a1a1a;color:#fff;padding:16px 20px;font:13px/1.5 monospace;white-space:pre-wrap';
-  d.textContent = 'DIAG: boot=' + _bootPath
-    + ' | active=' + (anyVisible ? anyVisible.id : 'NONE')
-    + ' | shell=' + (document.getElementById('app-shell')?.className || 'N/A')
-    + ' | views=' + Array.from(document.querySelectorAll('.view')).map(function(v){return v.id + (v.classList.contains('active')?'*':'')}).join(',');
-  d.onclick = function(){ d.remove(); };
-  document.body.appendChild(d);
   show('view-login');
 }, 4000);
+
+(function watchdog(){
+  let timer = null;
+  const recover = function(){
+    if(document.querySelector('.view.active')) return;
+    const shell = document.getElementById('app-shell');
+    if(shell && shell.classList.contains('on')){
+      shell.classList.remove('on','is-synoma','is-analizador');
+    }
+    show('view-login');
+  };
+  const check = function(){
+    if(timer) clearTimeout(timer);
+    timer = setTimeout(recover, 300);
+  };
+  const views = document.querySelectorAll('.view');
+  const obs = new MutationObserver(check);
+  views.forEach(function(v){
+    obs.observe(v, { attributes: true, attributeFilter: ['class'] });
+  });
+})();
 
 /* =============================================================================
    Parser del plan semanal y generadores de ICS/CSV (client-side)
