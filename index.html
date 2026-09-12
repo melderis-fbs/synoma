@@ -3367,30 +3367,37 @@ $('codigo-input').addEventListener('input', e=>{
   if(limpio.length === 6) confirmarCodigo();
 });
 
+let _bootPath = 'not-started';
+
 (async function boot(){
   mountVideos();
   pintarAnclas();
 
   const sesion = leerSesionLocal();
-  if(!sesion) return;
+  if(!sesion){ _bootPath = 'no-session'; return; }
 
   CLIENTE = sesion.cliente;
+  _bootPath = 'fetching-perfil';
 
   try{
     const res = await api('perfil');
+    _bootPath = 'perfil-status-' + res.status;
+
     if(!res.ok){
-      if(res.status === 401){ borrarSesionLocal(); show('view-login'); }
-      else showChooser();
+      if(res.status === 401){ borrarSesionLocal(); show('view-login'); _bootPath = 'shown-login-401'; }
+      else { showChooser(); _bootPath = 'shown-chooser-error'; }
       return;
     }
     const data = await res.json();
     if(data?.perfil?.oferta?.trim()){
       showChooser();
+      _bootPath = 'shown-chooser-ok';
     } else {
       await abrirIdentidad();
+      _bootPath = 'shown-setup';
     }
   }catch(e){
-    console.warn('boot: perfil check failed', e);
+    _bootPath = 'catch:' + (e?.message || e);
     showChooser();
   }
 
@@ -3408,6 +3415,20 @@ function ensureVisible(){
   }
   show('view-login');
 }
+
+setTimeout(function(){
+  const anyVisible = document.querySelector('.view.active');
+  if(anyVisible && anyVisible.offsetHeight > 0) return;
+  var d = document.createElement('div');
+  d.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#1a1a1a;color:#fff;padding:16px 20px;font:13px/1.5 monospace;white-space:pre-wrap';
+  d.textContent = 'DIAG: boot=' + _bootPath
+    + ' | active=' + (anyVisible ? anyVisible.id : 'NONE')
+    + ' | shell=' + (document.getElementById('app-shell')?.className || 'N/A')
+    + ' | views=' + Array.from(document.querySelectorAll('.view')).map(function(v){return v.id + (v.classList.contains('active')?'*':'')}).join(',');
+  d.onclick = function(){ d.remove(); };
+  document.body.appendChild(d);
+  show('view-login');
+}, 4000);
 
 /* =============================================================================
    Parser del plan semanal y generadores de ICS/CSV (client-side)
