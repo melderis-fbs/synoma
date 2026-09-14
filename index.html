@@ -134,6 +134,13 @@
   .msg.user{align-self:flex-end;background:var(--black);color:#fff;border-bottom-right-radius:6px}
   .msg.bot{align-self:flex-start;background:var(--bg);border:1px solid var(--border);border-bottom-left-radius:6px}
   .msg.bot b{color:var(--black)}
+  .feedback-trigger{display:inline-block;margin-top:8px;font-size:11px;color:#999;cursor:pointer;letter-spacing:.02em;transition:color .2s}
+  .feedback-trigger:hover{color:var(--beige)}
+  .feedback-form{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+  .feedback-form textarea{width:100%;min-height:60px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--white);font-family:inherit;font-size:13px;resize:vertical}
+  .feedback-form button{align-self:flex-end;padding:6px 16px;border:none;border-radius:6px;background:var(--beige);color:var(--black);font-size:12px;font-weight:700;cursor:pointer;letter-spacing:.04em}
+  .feedback-form button:disabled{opacity:.5;cursor:wait}
+  .feedback-learned{margin-top:8px;padding:8px 12px;background:rgba(200,180,140,.1);border-left:3px solid var(--beige);border-radius:4px;font-size:12px;color:var(--beige)}
   .msg .tag{display:inline-block;font-size:10px;letter-spacing:.22em;text-transform:uppercase;color:var(--beige-d);font-weight:800;margin-bottom:8px}
   .welcome{align-self:center;text-align:center;color:var(--muted);max-width:540px;margin-top:9vh}
   .welcome .mark{margin-bottom:18px}
@@ -1668,6 +1675,7 @@ window.abrirIdentidad = abrirIdentidad;
 window.borrarHistorial = borrarHistorial;
 window.exportarConversacion = exportarConversacion;
 window.importarConversacion = importarConversacion;
+window.enviarFeedback = enviarFeedback;
 window.salir = salir;
 window.runCmd = runCmd;
 window.askCmd = askCmd;
@@ -2891,11 +2899,79 @@ function startMsg(role, tag){
 function addMsg(role, text, tag){
   const body = startMsg(role, tag);
   body.innerHTML = renderLite(text);
+  if(role === 'bot') addFeedbackBtn(body.parentNode, text);
   scrollDown();
   return body;
 }
 
 function scrollDown(){ $('msgs').scrollTop = $('msgs').scrollHeight; }
+
+function addFeedbackBtn(msgDiv, textoOriginal){
+  const trigger = document.createElement('span');
+  trigger.className = 'feedback-trigger';
+  trigger.textContent = 'Dar feedback';
+  trigger.onclick = () => {
+    if(msgDiv.querySelector('.feedback-form')) return;
+    trigger.style.display = 'none';
+    const form = document.createElement('div');
+    form.className = 'feedback-form';
+    const ta = document.createElement('textarea');
+    ta.placeholder = 'Decime qué cambiarías de esta respuesta...';
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancelar';
+    cancelBtn.style.background = 'transparent';
+    cancelBtn.style.color = '#999';
+    cancelBtn.style.border = '1px solid #555';
+    cancelBtn.onclick = () => { form.remove(); trigger.style.display = ''; };
+    const sendBtn = document.createElement('button');
+    sendBtn.textContent = 'Enviar feedback';
+    sendBtn.onclick = () => enviarFeedback(textoOriginal, msgDiv, ta.value, form, sendBtn);
+    row.appendChild(cancelBtn);
+    row.appendChild(sendBtn);
+    form.appendChild(ta);
+    form.appendChild(row);
+    msgDiv.appendChild(form);
+    ta.focus();
+    scrollDown();
+  };
+  msgDiv.appendChild(trigger);
+}
+
+async function enviarFeedback(textoOriginal, msgDiv, feedbackTexto, formEl, btn){
+  feedbackTexto = (feedbackTexto || '').trim();
+  if(!feedbackTexto){ alert('Escribí tu feedback primero.'); return; }
+  btn.disabled = true;
+  btn.textContent = 'Procesando...';
+  try{
+    const res = await api('feedback', {
+      method: 'POST',
+      body: JSON.stringify({ contenido_original: textoOriginal, feedback_texto: feedbackTexto }),
+    });
+    const data = await res.json();
+    if(!res.ok || !data.ok){
+      alert(data?.message || 'No pude procesar el feedback. Prob\u00e1 de nuevo.');
+      btn.disabled = false;
+      btn.textContent = 'Enviar feedback';
+      return;
+    }
+    formEl.remove();
+    const triggerOld = msgDiv.querySelector('.feedback-trigger');
+    if(triggerOld) triggerOld.remove();
+    addMsg('user', '[Feedback] ' + feedbackTexto, null);
+    const rewriteBody = addMsg('bot', data.contenido_reescrito, 'Synoma');
+    const notice = document.createElement('div');
+    notice.className = 'feedback-learned';
+    notice.textContent = '\u2705 Aprend\u00ed: ' + data.regla_nueva;
+    rewriteBody.parentNode.appendChild(notice);
+    scrollDown();
+  }catch(e){
+    alert('Error al enviar el feedback. Prob\u00e1 de nuevo.');
+    btn.disabled = false;
+    btn.textContent = 'Enviar feedback';
+  }
+}
 
 function errorNote(message){
   const n = document.createElement('div');
@@ -3317,6 +3393,7 @@ async function send(opciones = {}){
             if(piezaFinal && acc && acc.trim().length > 50){
               body.parentNode.appendChild(botonGuardar(acc));
             }
+            addFeedbackBtn(body.parentNode, acc);
             scrollDown();
           }
         } else if(ev.type === 'error'){

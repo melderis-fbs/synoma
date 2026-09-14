@@ -959,7 +959,12 @@ Si ya existe un diagnóstico anterior en el historial, arrancá comparando en pa
 "Hace un mes tu visual decía X. Hoy dice Y. Avanzaste." o mostrar de nuevo el cambio pendiente si no hubo mejora.`;
 }
 
-// --- EXPORTAR CONVERSACIÓN ---
+// --- FEEDBACK ---
+  if (accion === "feedback" && req.method === "POST") {
+    return handleFeedback(cliente, req);
+  }
+
+  // --- EXPORTAR CONVERSACIÓN ---
   if (accion === "exportar" && req.method === "GET") {
     return handleExportar(cliente);
   }
@@ -1444,6 +1449,98 @@ async function handleVickyChat(cliente: { id: string }, req: Request) {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
   });
+}
+
+// ============ FEEDBACK (reescritura + aprendizaje de estilo) ============
+
+async function handleFeedback(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const contenidoOriginal = String(payload?.contenido_original || "").slice(0, 100000).trim();
+  const feedbackTexto = String(payload?.feedback_texto || "").slice(0, 5000).trim();
+  if (!contenidoOriginal || !feedbackTexto) return json({ error: "missing_data" }, 400);
+
+  let apiKey = Deno.env.get("ANTHROPIC_API_KEY") || null;
+  if (!apiKey) {
+    try {
+      const keyRows = await sbSelect("config", "valor", `clave=eq.anthropic_key&limit=1`);
+      apiKey = keyRows?.[0]?.valor || null;
+    } catch {}
+  }
+  if (!apiKey) return json({ error: "not_configured" }, 503);
+
+  const reglas = await sbSelect("reglas_estilo", "id,regla", `cliente_id=eq.${cliente.id}&order=creado_en.asc`) || [];
+  const reglasTexto = reglas.length
+    ? reglas.map((r: any) => `- [id=${r.id}] ${r.regla}`).join("\n")
+    : "(ninguna todavía)";
+
+  const systemPrompt = `Sos un asistente que corrige contenido según el feedback del cliente y destila reglas de estilo.
+Devolvé SOLO un JSON válido, sin markdown, sin backticks, sin texto antes o después. La forma exacta:
+{"contenido_reescrito":"...","regla_nueva":"...","regla_a_reemplazar_id":null}
+- contenido_reescrito: el contenido original reescrito aplicando el feedback.
+- regla_nueva: UNA sola frase corta y general que capture la preferencia de estilo del cliente (no específica a este contenido, sino aplicable a todo contenido futuro).
+- regla_a_reemplazar_id: si el feedback contradice una regla existente, poné el id (uuid) de esa regla. Si no contradice ninguna, dejá null.`;
+
+  const userMsg = `CONTENIDO ORIGINAL DE SYNOMA:\n${contenidoOriginal}\n\nFEEDBACK DEL CLIENTE:\n${feedbackTexto}\n\nREGLAS DE ESTILO ACTUALES DEL CLIENTE:\n${reglasTexto}`;
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        max_tokens: 4000,
+        system: [{ type: "text", text: systemPrompt }],
+        messages: [{ role: "user", content: userMsg }],
+      }),
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      return json({ error: "ai_error", message: `Anthropic ${res.status}: ${detail.slice(0, 200)}` }, 502);
+    }
+
+    const aiResult = await res.json();
+    const rawText = aiResult?.content?.[0]?.text || "";
+
+    let parsed;
+    try {
+      const cleanedText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
+      parsed = JSON.parse(cleanedText);
+    } catch {
+      return json({ error: "parse_error", message: "No pude procesar el feedback. Probá de nuevo." }, 422);
+    }
+
+    if (!parsed.contenido_reescrito || !parsed.regla_nueva) {
+      return json({ error: "parse_error", message: "La respuesta no tiene el formato esperado. Probá de nuevo." }, 422);
+    }
+
+    // Save new rule
+    await sbInsert("reglas_estilo", { cliente_id: cliente.id, regla: String(parsed.regla_nueva).slice(0, 500) });
+
+    // Delete old rule if contradicted
+    if (parsed.regla_a_reemplazar_id) {
+      try {
+        await sbDelete("reglas_estilo", `id=eq.${parsed.regla_a_reemplazar_id}&cliente_id=eq.${cliente.id}`);
+      } catch {}
+    }
+
+    // Save both messages (feedback as user, rewrite as assistant)
+    await guardarTurno(cliente.id, `[Feedback] ${feedbackTexto}`, parsed.contenido_reescrito);
+
+    return json({
+      ok: true,
+      contenido_reescrito: parsed.contenido_reescrito,
+      regla_nueva: parsed.regla_nueva,
+    });
+  } catch (err) {
+    return json({ error: "server_error", message: (err as Error).message?.slice(0, 200) || "Error interno" }, 500);
+  }
 }
 
 // ============ EXPORTAR / IMPORTAR CONVERSACIÓN ============
