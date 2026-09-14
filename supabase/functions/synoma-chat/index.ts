@@ -1722,6 +1722,28 @@ async function handleChat(cliente: { id: string }, req: Request) {
         let pieza = null;
         try { pieza = await guardarSiEsPieza(cliente.id, pregunta, respuesta); } catch {}
 
+        // Strategy follow-up: user confirmed with "sí"/"dale" (no /estrategia prefix),
+        // but the response is the full strategy. Check recent history for a pending
+        // /estrategia command and save this response as the strategy piece.
+        if (!pieza && !esEstrategia && !esClarificacion(respuesta)) {
+          try {
+            const convIdCheck = await conversacionAbierta(cliente.id);
+            const recientes = await sbSelect("mensajes", "rol,contenido",
+              `conversacion_id=eq.${convIdCheck}&order=creado_en.desc&limit=6`);
+            const huboComando = (recientes || []).some((m: any) =>
+              m.rol === "user" && /^\/estrategia\b/i.test(m.contenido));
+            if (huboComando) {
+              const titulo = extraerTitulo(respuesta, "estrategia");
+              const contenido = limpiarContenido(respuesta);
+              const rows = await sbInsert("piezas", {
+                cliente_id: cliente.id, tipo: "estrategia", titulo, contenido, comando: "estrategia", estado: "nueva",
+              });
+              pieza = Array.isArray(rows) ? rows[0] : null;
+              if (pieza) esEstrategia = true;
+            }
+          } catch {}
+        }
+
         // /estrategia: si la respuesta contiene el cierre del ciclo, guardarlo
         if (esEstrategia && pieza) {
           try {
