@@ -1533,6 +1533,15 @@ async function handleChat(cliente: { id: string }, req: Request) {
     { type: "text", text: bloqueDeFecha() },
   ];
 
+  // Reglas de estilo persistentes del cliente
+  try {
+    const reglas = await sbSelect("reglas_estilo", "regla", `cliente_id=eq.${cliente.id}&order=creado_en.asc`);
+    if (reglas?.length) {
+      const lista = reglas.map((r: any) => `- ${r.regla}`).join("\n");
+      system.push({ type: "text", text: `=== REGLAS DE ESTILO QUE ESTE CLIENTE PIDIÓ RESPETAR ===\nAplicá estas reglas a TODO el contenido que generes para este cliente, sin excepción:\n${lista}\n=== FIN ===` });
+    }
+  } catch {}
+
   // /racha: include biblioteca
   if (/^\/racha\b/i.test(pregunta)) {
     try {
