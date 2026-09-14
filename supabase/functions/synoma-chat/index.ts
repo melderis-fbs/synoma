@@ -959,6 +959,16 @@ Si ya existe un diagnóstico anterior en el historial, arrancá comparando en pa
 "Hace un mes tu visual decía X. Hoy dice Y. Avanzaste." o mostrar de nuevo el cambio pendiente si no hubo mejora.`;
 }
 
+// --- EXPORTAR CONVERSACIÓN ---
+  if (accion === "exportar" && req.method === "GET") {
+    return handleExportar(cliente);
+  }
+
+  // --- IMPORTAR CONVERSACIÓN ---
+  if (accion === "importar" && req.method === "POST") {
+    return handleImportar(cliente, req);
+  }
+
 // --- CHAT (default) ---
   if (req.method === "POST") return handleChat(cliente, req);
 
@@ -1434,6 +1444,54 @@ async function handleVickyChat(cliente: { id: string }, req: Request) {
     status: 200,
     headers: { ...corsHeaders, "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store", "X-Accel-Buffering": "no" },
   });
+}
+
+// ============ EXPORTAR / IMPORTAR CONVERSACIÓN ============
+
+async function handleExportar(cliente: { id: string }) {
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&tipo=eq.synoma&order=creado_en.asc`);
+  if (!convs || convs.length === 0) return json({ mensajes: [] });
+
+  const allMsgs: { rol: string; contenido: string }[] = [];
+  for (const c of convs) {
+    const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${c.id}&order=creado_en.asc`);
+    if (msgs) allMsgs.push(...msgs);
+  }
+  return json({ mensajes: allMsgs });
+}
+
+async function handleImportar(cliente: { id: string }, req: Request) {
+  let payload;
+  try { payload = await req.json(); } catch { return json({ error: "bad_json" }, 400); }
+
+  const mensajes = payload?.mensajes;
+  if (!Array.isArray(mensajes) || mensajes.length === 0) {
+    return json({ error: "bad_data", message: "No hay mensajes para importar." }, 400);
+  }
+
+  const creada = await sbInsert("conversaciones", { cliente_id: cliente.id, tipo: "synoma", titulo: "(importada)" });
+  const convId = Array.isArray(creada) ? creada[0]?.id : null;
+  if (!convId) return json({ error: "db_error", message: "No se pudo crear la conversación." }, 500);
+
+  const MAX = 50;
+  for (let i = 0; i < mensajes.length; i += MAX) {
+    const batch = mensajes.slice(i, i + MAX);
+    const rows = batch.map((m: { rol: string; contenido: string }) => ({
+      conversacion_id: convId,
+      rol: m.rol === "user" ? "user" : "assistant",
+      contenido: String(m.contenido || "").slice(0, 100000),
+    }));
+    for (const row of rows) {
+      await sbInsert("mensajes", row);
+    }
+  }
+
+  await sbUpdate("conversaciones", {
+    actualizado_en: new Date().toISOString(),
+    titulo: String(mensajes[mensajes.length - 1]?.contenido || "").slice(0, 80),
+  }, `id=eq.${convId}`);
+
+  return json({ ok: true, conversacion_id: convId, total: mensajes.length });
 }
 
 // ============ CHAT ============

@@ -22,9 +22,9 @@
   .nav .word{color:#fff;font-weight:900;font-size:21px;letter-spacing:.01em}
   .nav .word span{color:var(--beige)}
   .nav .menu{display:flex;gap:26px;align-items:center}
-  .nav .menu a,.nav .menu button{background:none;border:none;color:#cfcfcf;font-size:11.5px;letter-spacing:.22em;
+  .nav .menu a,.nav .menu button,.nav .menu .menu-import-label{background:none;border:none;color:#cfcfcf;font-size:11.5px;letter-spacing:.22em;
     text-transform:uppercase;font-weight:700;cursor:pointer;font-family:'Inter',sans-serif}
-  .nav .menu a:hover,.nav .menu button:hover{color:#fff}
+  .nav .menu a:hover,.nav .menu button:hover,.nav .menu .menu-import-label:hover{color:#fff}
   .nav .menu .who{color:var(--beige);letter-spacing:.14em;font-size:11px}
 
   .view{display:none}
@@ -729,6 +729,8 @@
       </span>
       <button onclick="abrirBiblioteca()">Mis contenidos</button>
       <button onclick="abrirIdentidad()">Mi identidad</button>
+      <button onclick="exportarConversacion()">Descargar mi conversación</button>
+      <label class="menu-import-label" style="cursor:pointer"><input type="file" id="import-file" accept=".txt" hidden onchange="importarConversacion(this)">Importar conversación</label>
       <button onclick="borrarHistorial()">Borrar chat</button>
       <button onclick="salir()">Salir</button>
     </div>
@@ -1664,6 +1666,8 @@ window.guardarIdentidad = guardarIdentidad;
 window.abrirBiblioteca = abrirBiblioteca;
 window.abrirIdentidad = abrirIdentidad;
 window.borrarHistorial = borrarHistorial;
+window.exportarConversacion = exportarConversacion;
+window.importarConversacion = importarConversacion;
 window.salir = salir;
 window.runCmd = runCmd;
 window.askCmd = askCmd;
@@ -1814,6 +1818,80 @@ async function borrarHistorial(){
     addMsg('bot', 'Listo, borré nuestra conversación. Tu identidad y tus Bases siguen cargadas — arrancamos de cero con todo tu contexto intacto.', 'Synoma');
   }catch(e){
     alert('No pudimos borrar el historial. Probá de nuevo.');
+  }
+}
+
+/* =============================================================================
+   Exportar / importar conversación
+   ============================================================================= */
+
+async function exportarConversacion(){
+  try{
+    const res = await api('exportar');
+    const data = await res.json();
+    const mensajes = data?.mensajes || [];
+    if(mensajes.length === 0){ alert('No hay mensajes para exportar.'); return; }
+
+    const lines = ['###SYNOMA_EXPORT_V1###'];
+    for(const m of mensajes){
+      lines.push('---[' + (m.rol === 'user' ? 'CLIENTE' : 'SYNOMA') + ']---');
+      lines.push(m.contenido);
+      lines.push('###FIN_MENSAJE###');
+    }
+
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'synoma-conversacion-' + new Date().toISOString().slice(0,10) + '.txt';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }catch(e){
+    alert('No pudimos exportar la conversación. Probá de nuevo.');
+  }
+}
+
+async function importarConversacion(fileInput){
+  const file = fileInput.files?.[0];
+  fileInput.value = '';
+  if(!file) return;
+
+  try{
+    const text = await file.text();
+    const firstLine = text.split('\n', 1)[0].trim();
+    if(firstLine !== '###SYNOMA_EXPORT_V1###'){
+      alert('Este archivo no tiene el formato correcto de Synoma. La primera línea debe ser ###SYNOMA_EXPORT_V1###');
+      return;
+    }
+
+    const mensajes = [];
+    const bloques = text.split(/^---\[(CLIENTE|SYNOMA)\]---$/m);
+    // bloques: [header, ROL1, contenido1...FIN...ROL2, contenido2...FIN, ...]
+    for(let i = 1; i < bloques.length; i += 2){
+      const rol = bloques[i] === 'CLIENTE' ? 'user' : 'assistant';
+      const raw = bloques[i + 1] || '';
+      const contenido = raw.replace(/###FIN_MENSAJE###[\s\S]*?(?=$)/m, '').replace(/###FIN_MENSAJE###/g, '').trim();
+      if(contenido) mensajes.push({ rol, contenido });
+    }
+
+    if(mensajes.length === 0){ alert('No se encontraron mensajes en el archivo.'); return; }
+    if(!confirm('Se van a importar ' + mensajes.length + ' mensajes como una nueva conversación. ¿Continuar?')) return;
+
+    const res = await api('importar', {
+      method: 'POST',
+      body: JSON.stringify({ mensajes }),
+    });
+    const data = await res.json();
+    if(!res.ok){ alert(data?.message || 'Error al importar.'); return; }
+
+    alert('Se importaron ' + data.total + ' mensajes. Tu conversación importada ya está activa.');
+    CHAT_CARGADO = false;
+    $('msgs').replaceChildren();
+    cargarHistorial();
+  }catch(e){
+    alert('Error al importar la conversación. Probá de nuevo.');
   }
 }
 
