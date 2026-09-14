@@ -1083,18 +1083,77 @@
 </div>
 
 <script>
-window.addEventListener('error', function(e){
-  var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
-  d.textContent = 'JS ERROR: ' + (e.message || e.error) + (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : '');
-  document.body.appendChild(d);
-});
-window.addEventListener('unhandledrejection', function(e){
-  var d = document.createElement('div');
-  d.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c25a52;color:#fff;padding:16px 20px;font:14px/1.5 monospace;white-space:pre-wrap';
-  d.textContent = 'PROMISE ERROR: ' + (e.reason && e.reason.message ? e.reason.message : e.reason);
-  document.body.appendChild(d);
-});
+(function(){
+  var SB_URL = 'https://lzdzgquzucgznrmeldix.supabase.co';
+  var SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx6ZHpncXV6dWNnem5ybWVsZGl4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODU4Njk3NTgsImV4cCI6MjEwMTQ0NTc1OH0.9Pa6SL-an_9KnQ13QWDChLdLCHEWaBhtrlqjA6fcPV8';
+  var logged = false;
+
+  function getPantalla(){
+    try {
+      var h = location.hash.replace('#','') || 'inicio';
+      var visible = document.querySelector('.pantalla:not([style*="display: none"]),[data-screen]:not([style*="display: none"])');
+      if(visible && visible.id) h = visible.id;
+      return h;
+    } catch(e){ return 'desconocida'; }
+  }
+
+  function logError(mensaje, stack){
+    if(logged) return;
+    logged = true;
+    try {
+      var clienteId = '';
+      try {
+        var raw = localStorage.getItem('synoma_cliente');
+        if(raw) { var c = JSON.parse(raw); clienteId = c && c.id ? c.id : ''; }
+      } catch(e){}
+      fetch(SB_URL + '/rest/v1/errores_cliente', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SB_KEY,
+          'Authorization': 'Bearer ' + SB_KEY,
+          'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          cliente_id: clienteId || null,
+          mensaje: String(mensaje).slice(0, 2000),
+          stack: String(stack || '').slice(0, 8000) || null,
+          pantalla: getPantalla(),
+          user_agent: navigator.userAgent
+        })
+      }).catch(function(){});
+    } catch(e){}
+  }
+
+  function showCrash(){
+    try {
+      var existing = document.getElementById('synoma-crash');
+      if(existing) return;
+      var overlay = document.createElement('div');
+      overlay.id = 'synoma-crash';
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#111;color:#eee;display:flex;align-items:center;justify-content:center;font-family:-apple-system,system-ui,sans-serif';
+      overlay.innerHTML = '<div style="text-align:center;padding:32px;max-width:400px">'
+        + '<div style="font-size:40px;margin-bottom:16px">:(</div>'
+        + '<h2 style="margin:0 0 12px;font-size:18px;font-weight:600">Ocurri\u00f3 un error al cargar</h2>'
+        + '<p style="margin:0 0 24px;font-size:14px;color:#aaa;line-height:1.5">Ya registramos el problema. Prob\u00e1 recargar la p\u00e1gina.</p>'
+        + '<button onclick="location.reload()" style="padding:10px 28px;border:none;border-radius:8px;background:#c8b48c;color:#111;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.03em">Recargar</button>'
+        + '</div>';
+      document.body.appendChild(overlay);
+    } catch(e){}
+  }
+
+  window.addEventListener('error', function(e){
+    var msg = (e.message || '') + (e.filename ? ' (' + e.filename + ':' + e.lineno + ')' : '');
+    logError(msg, e.error && e.error.stack ? e.error.stack : '');
+    showCrash();
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    var msg = e.reason && e.reason.message ? e.reason.message : String(e.reason);
+    var stack = e.reason && e.reason.stack ? e.reason.stack : '';
+    logError(msg, stack);
+    showCrash();
+  });
+})();
 </script>
 <script type="module">
 const SUPABASE_URL = 'https://lzdzgquzucgznrmeldix.supabase.co';
