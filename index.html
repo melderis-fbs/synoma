@@ -1156,8 +1156,19 @@
     showCrash();
   });
 
+  var AUTOFIX_KEY = 'synoma_autofix_intentado';
   var watchdogTimer = setTimeout(function(){
     if(window.__synomaBooted) return;
+    try {
+      if(!localStorage.getItem(AUTOFIX_KEY)){
+        localStorage.setItem(AUTOFIX_KEY, '1');
+        (typeof caches !== 'undefined' && caches.keys
+          ? caches.keys().then(function(ks){ return Promise.all(ks.map(function(k){ return caches.delete(k) })) })
+          : Promise.resolve()
+        ).then(function(){ location.reload(); }).catch(function(){ location.reload(); });
+        return;
+      }
+    } catch(e){}
     logError('El módulo principal no arrancó (posible navegador incompatible)', null);
     showCrash('Probá recargar la página. Si el problema sigue, actualizá tu navegador o probá desde Google Chrome actualizado.');
   }, 10000);
@@ -1166,6 +1177,7 @@
     configurable: true,
     set: function(v){
       clearTimeout(watchdogTimer);
+      try { localStorage.removeItem(AUTOFIX_KEY); } catch(e){}
       Object.defineProperty(window, '__synomaBooted', {value: v, writable: true, configurable: true});
     }
   });
