@@ -15,6 +15,7 @@ const DIAS_SESION = 120;
 const MINUTOS_CODIGO = 10;
 const MAX_INTENTOS = 5;
 const MAX_PEDIDOS_HORA = 5;
+const LIMITE_HISTORIAL_VISIBLE = 100;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1288,11 +1289,11 @@ async function handleSavePiezaManual(cliente: { id: string }, req: Request) {
 
 // ============ HISTORIAL ============
 async function handleGetHistorial(cliente: { id: string }) {
-  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&order=actualizado_en.desc&limit=1`);
+  const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&tipo=eq.synoma&order=actualizado_en.desc&limit=1`);
   if (!convs || convs.length === 0) return json({ mensajes: [] });
 
-  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.asc&limit=60`);
-  return json({ mensajes: msgs || [] });
+  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.desc&limit=${LIMITE_HISTORIAL_VISIBLE}`);
+  return json({ mensajes: (msgs || []).reverse() });
 }
 
 async function handleDeleteHistorial(cliente: { id: string }) {
@@ -1310,8 +1311,8 @@ async function handleDeleteHistorial(cliente: { id: string }) {
 async function handleGetHistorialVicky(cliente: { id: string }) {
   const convs = await sbSelect("conversaciones", "id", `cliente_id=eq.${cliente.id}&tipo=eq.vicky&order=actualizado_en.desc&limit=1`);
   if (!convs || convs.length === 0) return json({ mensajes: [] });
-  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.asc&limit=60`);
-  return json({ mensajes: msgs || [] });
+  const msgs = await sbSelect("mensajes", "rol,contenido", `conversacion_id=eq.${convs[0].id}&order=creado_en.desc&limit=${LIMITE_HISTORIAL_VISIBLE}`);
+  return json({ mensajes: (msgs || []).reverse() });
 }
 
 async function handleDeleteHistorialVicky(cliente: { id: string }) {
