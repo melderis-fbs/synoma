@@ -1115,7 +1115,7 @@ async function handleLogin(req: Request) {
         body: JSON.stringify({
           from: remitente,
           to: email,
-          subject: "Tu código de acceso a Synoma",
+          subject: `${codigo} es tu código de acceso a Synoma`,
           text: `Tu código es: ${codigo}\n\nVence en ${MINUTOS_CODIGO} minutos.`,
         }),
       });

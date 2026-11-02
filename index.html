@@ -1486,6 +1486,36 @@ function borrarSesionLocal(){
   localStorage.removeItem('synoma_cliente');
 }
 
+// En el celular, ir al mail a copiar el código suele recargar la pestaña. Guardamos
+// el paso pendiente para volver directo a la casilla del código.
+const MINUTOS_LOGIN_PENDIENTE = 10;
+
+function guardarLoginPendiente(email){
+  localStorage.setItem('synoma_login_pendiente', JSON.stringify({ email, hasta: Date.now() + MINUTOS_LOGIN_PENDIENTE * 60 * 1000 }));
+}
+
+function leerLoginPendiente(){
+  try{
+    const p = JSON.parse(localStorage.getItem('synoma_login_pendiente') || 'null');
+    if(p?.email && p.hasta > Date.now()) return p.email;
+  }catch{}
+  localStorage.removeItem('synoma_login_pendiente');
+  return null;
+}
+
+function borrarLoginPendiente(){
+  localStorage.removeItem('synoma_login_pendiente');
+}
+
+function mostrarPasoCodigo(email){
+  EMAIL = email;
+  $('email-input').value = email;
+  $('email-eco').textContent = email;
+  $('paso-email').hidden = true;
+  $('paso-codigo').hidden = false;
+  $('codigo-input').focus();
+}
+
 /* =============================================================================
    Ancla de valor
    ============================================================================= */
@@ -1598,11 +1628,8 @@ async function pedirCodigo(reenvio){
       return;
     }
 
-    EMAIL = email;
-    $('email-eco').textContent = email;
-    $('paso-email').hidden = true;
-    $('paso-codigo').hidden = false;
-    $('codigo-input').focus();
+    mostrarPasoCodigo(email);
+    guardarLoginPendiente(email);
 
     if(data.enviado){
       msgLogin('Te mandamos un código de 6 números a tu email.', 'info');
@@ -1658,6 +1685,7 @@ async function confirmarCodigo(){
     localStorage.setItem('synoma_token', data.token);
     CLIENTE = { email: data.cliente.email, nombre: data.cliente.nombre, id: data.cliente.id };
     localStorage.setItem('synoma_cliente', JSON.stringify(CLIENTE));
+    borrarLoginPendiente();
 
     $('dev-codigo').hidden = true;
     msgLogin('');
@@ -1671,6 +1699,7 @@ async function confirmarCodigo(){
 }
 
 function volverAEmail(){
+  borrarLoginPendiente();
   $('dev-codigo').hidden = true;
   $('paso-codigo').hidden = true;
   $('paso-email').hidden = false;
@@ -3617,7 +3646,15 @@ let _bootPath = 'not-started';
   pintarAnclas();
 
   const sesion = leerSesionLocal();
-  if(!sesion){ _bootPath = 'no-session'; return; }
+  if(!sesion){
+    _bootPath = 'no-session';
+    const pendiente = leerLoginPendiente();
+    if(pendiente){
+      mostrarPasoCodigo(pendiente);
+      msgLogin('Escribí el código de 6 números que te llegó por email.', 'info');
+    }
+    return;
+  }
 
   CLIENTE = sesion.cliente;
   _bootPath = 'fetching-perfil';
