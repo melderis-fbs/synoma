@@ -1,0 +1,13 @@
+{
+  "projectId": "69615204",
+  "functions": {
+    "analyze-call": {
+      "hasChanged": false,
+      "hash": "4623988585b45169f5352b76e2f6773077de4488d4f52931b3ea60f7fcfc1ae4"
+    },
+    "synoma-chat": {
+      "hasChanged": false,
+      "hash": "16b6a46923d85f53d4c050388a60bd2ce4f0e49e2f7d32f1326f859ee462a54e"
+    }
+  }
+}

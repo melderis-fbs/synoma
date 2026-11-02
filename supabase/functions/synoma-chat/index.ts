@@ -1148,7 +1148,7 @@ async function handleVerificar(req: Request) {
   }
 
   const reg = rows[0];
-  if (reg.usado_en) return json({ error: "usado", message: "Ese código ya se usó." }, 400);
+  if (reg.usado_en) return json({ error: "usado", message: "Ese código ya no sirve. Usá el del último email que te llegó, o pedí uno nuevo." }, 400);
   if (new Date(reg.expira_en) < new Date()) return json({ error: "expirado", message: "El código venció. Pedí uno nuevo." }, 400);
   if (reg.intentos >= MAX_INTENTOS) return json({ error: "demasiados", message: "Demasiados intentos. Pedí un código nuevo." }, 400);
 
