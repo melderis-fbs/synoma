@@ -3688,7 +3688,15 @@ let _bootPath = 'not-started';
   ensureVisible();
 })();
 
+// El analizador vive fuera de las .view: si no lo contamos, los vigilantes de
+// pantalla vacía lo toman por un error y mandan al login.
+function analizadorAbierto(){
+  const shell = document.getElementById('app-shell');
+  return !!shell && shell.classList.contains('on') && shell.classList.contains('is-analizador');
+}
+
 function ensureVisible(){
+  if(analizadorAbierto()) return;
   const any = document.querySelector('.view.active');
   if(any){
     const shell = document.getElementById('app-shell');
@@ -3701,6 +3709,7 @@ function ensureVisible(){
 }
 
 setTimeout(function(){
+  if(analizadorAbierto()) return;
   const anyVisible = document.querySelector('.view.active');
   if(anyVisible && anyVisible.offsetHeight > 0) return;
   show('view-login');
@@ -3709,7 +3718,7 @@ setTimeout(function(){
 (function watchdog(){
   let timer = null;
   const recover = function(){
-    if(document.querySelector('.view.active')) return;
+    if(document.querySelector('.view.active') || analizadorAbierto()) return;
     const shell = document.getElementById('app-shell');
     if(shell && shell.classList.contains('on')){
       shell.classList.remove('on','is-synoma','is-analizador');
