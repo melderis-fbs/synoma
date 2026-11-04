@@ -2803,6 +2803,10 @@ async function abrirCalendario(piezaId){
     }
 
     const plan = parsearPlan(pieza.contenido || '', pieza.titulo);
+    if(!plan.piezas.length){
+      $('cal-sub').textContent = 'Este plan no tiene la tabla de días que usa el calendario. Pedí uno nuevo con /semana y se va a ver acá en columnas.';
+      return;
+    }
     pintarCalendario(plan, piezaId);
   }catch(e){
     $('cal-sub').textContent = '⚠️ No pudimos armar el calendario.';
@@ -3728,7 +3732,6 @@ setTimeout(function(){
    ============================================================================= */
 function parsearPlan(texto, titulo){
   const lineas = texto.split('\n');
-  const dias = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
   const piezas = [];
 
   for(const linea of lineas){
@@ -3737,8 +3740,8 @@ function parsearPlan(texto, titulo){
     if(celdas.length < 2) continue;
     if(celdas[0] === 'Día' || celdas[0].toLowerCase() === 'dia') continue;
 
-    const dia = celdas[0];
-    if(!dias.includes(dia)) continue;
+    const dia = normalizarDia(celdas[0]);
+    if(!dia) continue;
 
     piezas.push({
       dia,
@@ -3754,6 +3757,14 @@ function parsearPlan(texto, titulo){
   }
 
   return { titulo: titulo || 'Mi semana de contenido', piezas };
+}
+
+// La IA escribe el día de muchas formas: "Lun", "Lunes", "**Miércoles 5/11**", "Mie".
+function normalizarDia(celda){
+  const dias = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  const clave = celda.replace(/[*_`]/g, '').trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().slice(0, 3);
+  const idx = ['lun','mar','mie','jue','vie','sab','dom'].indexOf(clave);
+  return idx < 0 ? '' : dias[idx];
 }
 
 function fechaParaDia(diaCorto){
