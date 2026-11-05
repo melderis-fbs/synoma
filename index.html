@@ -255,6 +255,7 @@
   /* auto-fit y no columnas fijas: con 5 piezas quedan 5 columnas en escritorio y
      una sola en el teléfono, sin escribir dos layouts. */
   .cal{display:grid;grid-template-columns:repeat(auto-fit,minmax(184px,1fr));gap:12px;margin-top:22px}
+  .cal.cal-chat{margin:14px 0;grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
   .dia{border:1px solid var(--border);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
   .dia-cab{background:var(--cream);padding:10px 12px}
   .dia-cab b{display:block;font-size:11.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--black);font-weight:800}
@@ -2826,8 +2827,35 @@ function pintarCalendario(plan, piezaId){
   $('cal-sub').textContent =
     `${plan.piezas.length} piezas · ${educativas} educativas · ${ventas} de venta`;
 
-  const grilla = $('cal-grilla');
-  grilla.replaceChildren();
+  $('cal-grilla').replaceWith(crearGrillaPlan(plan));
+
+  // Las descargas se generan en el navegador avec Blob: no necesitan servidor.
+  const desc = $('cal-descargas');
+  desc.replaceChildren();
+
+  const ics = document.createElement('a');
+  ics.className = 'descarga';
+  ics.textContent = '📅 Agregar a mi calendario';
+  ics.href = URL.createObjectURL(new Blob([generarICS(plan)], { type: 'text/calendar' }));
+  ics.download = 'plan-synoma.ics';
+  desc.appendChild(ics);
+
+  const csv = document.createElement('a');
+  csv.className = 'descarga claro';
+  csv.textContent = '📊 Descargar en Excel';
+  csv.href = URL.createObjectURL(new Blob([generarCSV(plan)], { type: 'text/csv' }));
+  csv.download = 'plan-synoma.csv';
+  desc.appendChild(csv);
+
+  const nota = document.createElement('small');
+  nota.textContent = 'El calendario ya lo ves acá arriba. Estos botones son opcionales: el primero pasa cada pieza a tu agenda (Google Calendar, iPhone u Outlook) y el segundo la baja como planilla.';
+  desc.appendChild(nota);
+}
+
+function crearGrillaPlan(plan){
+  const grilla = document.createElement('div');
+  grilla.className = 'cal';
+  grilla.id = 'cal-grilla';
 
   for(const p of plan.piezas){
     const dia = document.createElement('div');
@@ -2892,28 +2920,29 @@ function pintarCalendario(plan, piezaId){
     dia.append(cab, cuerpo);
     grilla.appendChild(dia);
   }
+  return grilla;
+}
 
-  // Las descargas se generan en el navegador avec Blob: no necesitan servidor.
-  const desc = $('cal-descargas');
-  desc.replaceChildren();
+// La tabla del plan en el chat se leía como una planilla: se reemplaza por las
+// columnas del calendario y queda el resto del texto alrededor.
+function pintarTextoConPlan(body, text){
+  const plan = parsearPlan(text);
+  if(plan.piezas.length < 2){ body.innerHTML = renderLite(text); return; }
 
-  const ics = document.createElement('a');
-  ics.className = 'descarga';
-  ics.textContent = '📅 Agregar a mi calendario';
-  ics.href = URL.createObjectURL(new Blob([generarICS(plan)], { type: 'text/calendar' }));
-  ics.download = 'plan-synoma.ics';
-  desc.appendChild(ics);
+  const lineas = text.split('\n');
+  const ini = lineas.findIndex(l => l.trim().startsWith('|'));
+  let fin = ini;
+  while(fin < lineas.length && lineas[fin].trim().startsWith('|')) fin++;
 
-  const csv = document.createElement('a');
-  csv.className = 'descarga claro';
-  csv.textContent = '📊 Descargar en Excel';
-  csv.href = URL.createObjectURL(new Blob([generarCSV(plan)], { type: 'text/csv' }));
-  csv.download = 'plan-synoma.csv';
-  desc.appendChild(csv);
-
-  const nota = document.createElement('small');
-  nota.textContent = 'El archivo de calendario entra en Google Calendar, en el iPhone y en Outlook: cada pieza queda como un evento de ese día, con el gancho y el punteo en la descripción.';
-  desc.appendChild(nota);
+  const antes = lineas.slice(0, ini).join('\n').trim();
+  const despues = lineas.slice(fin).join('\n').trim();
+  body.replaceChildren();
+  if(antes){ const a = document.createElement('div'); a.innerHTML = renderLite(antes); body.appendChild(a); }
+  const grilla = crearGrillaPlan(plan);
+  grilla.removeAttribute('id');
+  grilla.classList.add('cal-chat');
+  body.appendChild(grilla);
+  if(despues){ const d = document.createElement('div'); d.innerHTML = renderLite(despues); body.appendChild(d); }
 }
 
 function fechaLarga(iso){
@@ -3019,7 +3048,8 @@ function startMsg(role, tag){
 
 function addMsg(role, text, tag){
   const body = startMsg(role, tag);
-  body.innerHTML = renderLite(text);
+  if(role === 'bot') pintarTextoConPlan(body, text);
+  else body.innerHTML = renderLite(text);
   if(role === 'bot') addFeedbackBtn(body.parentNode, text);
   scrollDown();
   return body;
@@ -3304,7 +3334,8 @@ function mostrarTarjeta(body, pieza, texto, truncada){
   ver.textContent = 'Ver el texto acá';
   ver.onclick = () => {
     // El texto no se perdió: estaba guardado en el nodo.
-    body.innerHTML = renderLite(body.dataset.texto || '');
+    body.innerHTML = '';
+    pintarTextoConPlan(body, body.dataset.texto || '');
     scrollDown();
   };
   acciones.appendChild(ver);
@@ -3319,6 +3350,16 @@ function mostrarTarjeta(body, pieza, texto, truncada){
   }
 
   body.replaceChildren(t);
+
+  if(tipo === 'plan'){
+    const plan = parsearPlan(texto);
+    if(plan.piezas.length){
+      const grilla = crearGrillaPlan(plan);
+      grilla.removeAttribute('id');
+      grilla.classList.add('cal-chat');
+      body.appendChild(grilla);
+    }
+  }
 }
 
 // Las notas de estado (continuando / cortada / guardada) se reemplazan, no se
@@ -3498,6 +3539,7 @@ async function send(opciones = {}){
               // justamente el problema que la biblioteca resuelve.
               mostrarTarjeta(body, piezaFinal, acc, ev.truncada);
             } else {
+              pintarTextoConPlan(body, acc);
               body.parentNode.appendChild(botonGuardar(acc));
               // Si la respuesta es el Paso 1 de /estrategia (la idea para aprobar),
               // mostrar botones de respuesta rápida en lugar de que el cliente
